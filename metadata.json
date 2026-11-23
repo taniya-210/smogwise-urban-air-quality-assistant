@@ -1,0 +1,6 @@
+{
+  "name": "SmogWise – Urban Air Quality Assistant",
+  "description": "GenAI-powered urban air quality dashboard and personal assistant helping families and communities navigate severe smog with low-emission routines, indoor air guidance, health advisories, and community action plans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
