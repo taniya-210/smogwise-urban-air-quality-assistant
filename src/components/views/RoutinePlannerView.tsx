@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AlertCircle, CalendarClock, Loader2, RefreshCw } from 'lucide-react';
-import { AiGroundingBanner } from '../AiGroundingBanner.tsx';
-import { FallbackNoticeBanner } from '../FallbackNoticeBanner.tsx';
+import { AiStatusStrip, CollapsibleDataGrounding } from '../AiGroundingBanner.tsx';
 import { requestRoutinePlan } from '../../services/api.ts';
 import { COMMUTE_MODES } from '../../shared/emissions.ts';
 import type {
   AirQualityData,
+  AQIScaleId,
   CommuteModeId,
   HouseholdProfile,
   RoutinePlanResponse,
@@ -13,12 +13,14 @@ import type {
 
 interface RoutinePlannerViewProps {
   airQuality: AirQualityData | null;
+  aqiScale: AQIScaleId;
   profile: HouseholdProfile;
   onUpdateProfile: (patch: Partial<HouseholdProfile>) => void;
 }
 
 export function RoutinePlannerView({
   airQuality,
+  aqiScale,
   profile,
   onUpdateProfile,
 }: RoutinePlannerViewProps) {
@@ -26,11 +28,13 @@ export function RoutinePlannerView({
   const [generatedContextKey, setGeneratedContextKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   const currentContextKey = JSON.stringify({
     loc: airQuality?.location.name ?? null,
     mode: airQuality?.mode ?? null,
     aqi: airQuality?.current.usAqi ?? null,
+    scale: aqiScale,
     lifestyle: profile.lifestyle,
     commuteMode: profile.commuteMode,
     dist: profile.commuteDistanceKm,
@@ -41,30 +45,38 @@ export function RoutinePlannerView({
     resp: profile.hasRespiratorySensitivity,
     notes: profile.notes.trim(),
   });
-  const contextChanged = Boolean(plan && generatedContextKey && generatedContextKey !== currentContextKey);
+  const contextChanged = Boolean(
+    plan && generatedContextKey && generatedContextKey !== currentContextKey
+  );
 
-  async function runGeneration() {
+  async function runGeneration(forceRefresh = false) {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     const keyAtRequest = currentContextKey;
     try {
-      const result = await requestRoutinePlan(airQuality, profile);
+      const result = await requestRoutinePlan(airQuality, profile, {
+        aqiScale,
+        forceRefresh,
+      });
       setPlan(result);
       setGeneratedContextKey(keyAtRequest);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to generate daily routine.');
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
 
   function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
-    void runGeneration();
+    void runGeneration(false);
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="space-y-1">
         <h2 className="text-2xl font-bold text-slate-900">AI Daily Routine Planner</h2>
         <p className="text-sm text-slate-600 max-w-3xl">
@@ -81,7 +93,7 @@ export function RoutinePlannerView({
           <div>
             <h3 className="text-base font-bold text-slate-900">Your Daily Profile</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Changes are saved locally in your browser and shared with Indoor Air & Assistant tools.
+              Changes are saved locally in your browser and shared with Indoor Air &amp; Assistant tools.
             </p>
           </div>
 
@@ -247,12 +259,12 @@ export function RoutinePlannerView({
           >
             {loading ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Generating Routine...
               </>
             ) : (
               <>
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-4 h-4" aria-hidden="true" />
                 Generate Personalized Routine
               </>
             )}
@@ -260,20 +272,20 @@ export function RoutinePlannerView({
         </form>
 
         {/* Routine Output */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="lg:col-span-8 space-y-5">
           {error && (
             <div
               role="alert"
               className="flex items-start gap-2.5 p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-900"
             >
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
 
           {!plan && !loading && (
             <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-10 text-center space-y-3">
-              <CalendarClock className="w-8 h-8 text-slate-400 mx-auto" />
+              <CalendarClock className="w-8 h-8 text-slate-400 mx-auto" aria-hidden="true" />
               <h3 className="text-base font-bold text-slate-900">
                 Ready to Build Your Smog-Aware Schedule
               </h3>
@@ -286,32 +298,31 @@ export function RoutinePlannerView({
 
           {loading && (
             <div className="space-y-4 animate-pulse" aria-busy="true">
-              <div className="h-28 rounded-xl bg-slate-100 border border-slate-200" />
+              <div className="h-24 rounded-xl bg-slate-100 border border-slate-200" />
               <div className="h-64 rounded-xl bg-slate-100 border border-slate-200" />
               <div className="h-44 rounded-xl bg-slate-100 border border-slate-200" />
             </div>
           )}
 
           {plan && !loading && (
-            <div className="space-y-6">
-              {plan.generatedBy === 'fallback' && (
-                <FallbackNoticeBanner
-                  reason={plan.fallbackReason}
-                  category={plan.errorCategory}
-                  onRetry={() => void runGeneration()}
-                  retrying={loading}
-                />
-              )}
-
-              <AiGroundingBanner
+            <div className="space-y-5">
+              {/* Compact AI Status Strip */}
+              <AiStatusStrip
                 generatedBy={plan.generatedBy}
-                dataSourcesUsed={plan.dataSourcesUsed}
+                fromCache={plan.fromCache}
+                cachedAt={plan.cachedAt}
+                modelUsed={plan.modelUsed}
+                fallbackReason={plan.fallbackReason}
+                errorCategory={plan.errorCategory}
+                diagnosticDetail={plan.diagnosticDetail}
                 contextChanged={contextChanged}
-                contextChangedLabel={`Your active city (${airQuality?.location.name || 'none'}), AQI, or daily profile changed since this routine was generated.`}
-                onRegenerate={() => void runGeneration()}
+                contextChangedLabel={`Your active city (${airQuality?.location.name || 'none'}), AQI scale, or daily profile changed since this routine was generated.`}
+                onRegenerate={() => void runGeneration(false)}
+                onRetryGemini={() => void runGeneration(true)}
                 regenerating={loading}
               />
 
+              {/* Actionable Summary First */}
               <section className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
                 <p className="text-base font-semibold text-slate-900 leading-relaxed">
                   {plan.summary}
@@ -409,11 +420,20 @@ export function RoutinePlannerView({
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
-                  <p className="text-xs text-slate-500 pt-2 border-t border-slate-200">
-                    {plan.disclaimer}
-                  </p>
                 </section>
               )}
+
+              {/* Collapsible Data Grounding (Collapsed by Default, Below Recommendations) */}
+              <CollapsibleDataGrounding
+                generatedBy={plan.generatedBy}
+                fromCache={plan.fromCache}
+                cachedAt={plan.cachedAt}
+                modelUsed={plan.modelUsed}
+                airQuality={airQuality}
+                aqiScale={plan.aqiScale ?? aqiScale}
+                dataSourcesUsed={plan.dataSourcesUsed}
+                disclaimer={plan.disclaimer}
+              />
             </div>
           )}
         </div>

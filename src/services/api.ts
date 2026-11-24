@@ -1,5 +1,6 @@
 import type {
   AirQualityData,
+  AQIScaleId,
   ChatApiResponse,
   CommunityPlanRequest,
   CommunityPlanResponse,
@@ -35,44 +36,69 @@ function sanitizeErrorMessage(raw: string, status: number): string {
   return trimmed;
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
+const inFlightRequests = new Map<string, Promise<unknown>>();
 
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const rawMessage =
-      payload && typeof payload.error === 'string' ? payload.error : '';
-    throw new Error(sanitizeErrorMessage(rawMessage, response.status));
+async function fetchJson<T>(url: string, init?: RequestInit, dedupeKey?: string): Promise<T> {
+  if (dedupeKey) {
+    const existing = inFlightRequests.get(dedupeKey);
+    if (existing) {
+      return existing as Promise<T>;
+    }
   }
 
-  return payload as T;
+  const promise = (async () => {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init?.headers || {}),
+      },
+    });
+
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const rawMessage =
+        payload && typeof payload.error === 'string' ? payload.error : '';
+      throw new Error(sanitizeErrorMessage(rawMessage, response.status));
+    }
+
+    return payload as T;
+  })();
+
+  if (dedupeKey) {
+    inFlightRequests.set(dedupeKey, promise);
+    promise.finally(() => {
+      inFlightRequests.delete(dedupeKey);
+    });
+  }
+
+  return promise;
 }
 
 export interface HealthStatus {
   status: string;
   geminiConfigured: boolean;
+  geminiModel?: string;
   waqiConfigured: boolean;
   demoScenariosCount: number;
   timestamp: string;
 }
 
 export function fetchHealthStatus(): Promise<HealthStatus> {
-  return fetchJson<HealthStatus>('/api/health');
+  return fetchJson<HealthStatus>('/api/health', undefined, 'GET:/api/health');
 }
 
 export function searchCities(query: string): Promise<{ results: LocationInfo[] }> {
   const params = new URLSearchParams({ q: query });
-  return fetchJson<{ results: LocationInfo[] }>(`/api/locations/search?${params.toString()}`);
+  const url = `/api/locations/search?${params.toString()}`;
+  return fetchJson<{ results: LocationInfo[] }>(url, undefined, `GET:${url}`);
 }
 
-export function fetchAirQualityForLocation(location: LocationInfo): Promise<AirQualityData> {
+export function fetchAirQualityForLocation(
+  location: LocationInfo,
+  options?: { refresh?: boolean }
+): Promise<AirQualityData> {
   const params = new URLSearchParams({
     lat: String(location.latitude),
     lon: String(location.longitude),
@@ -83,64 +109,93 @@ export function fetchAirQualityForLocation(location: LocationInfo): Promise<AirQ
   if (location.admin1) {
     params.set('admin1', location.admin1);
   }
-  return fetchJson<AirQualityData>(`/api/air-quality?${params.toString()}`);
+  if (options?.refresh) {
+    params.set('refresh', 'true');
+  }
+  const url = `/api/air-quality?${params.toString()}`;
+  return fetchJson<AirQualityData>(url, undefined, options?.refresh ? undefined : `GET:${url}`);
 }
 
 export function fetchDemoScenarios(): Promise<{ scenarios: DemoScenarioSummary[] }> {
-  return fetchJson<{ scenarios: DemoScenarioSummary[] }>('/api/air-quality/demos');
+  return fetchJson<{ scenarios: DemoScenarioSummary[] }>(
+    '/api/air-quality/demos',
+    undefined,
+    'GET:/api/air-quality/demos'
+  );
 }
 
 export function fetchDemoScenarioById(scenarioId: string): Promise<AirQualityData> {
-  return fetchJson<AirQualityData>(
-    `/api/air-quality/demo/${encodeURIComponent(scenarioId)}`
-  );
+  const url = `/api/air-quality/demo/${encodeURIComponent(scenarioId)}`;
+  return fetchJson<AirQualityData>(url, undefined, `GET:${url}`);
 }
 
 export function requestRoutinePlan(
   airQuality: AirQualityData | null,
-  profile: HouseholdProfile
+  profile: HouseholdProfile,
+  options?: { aqiScale?: AQIScaleId; forceRefresh?: boolean }
 ): Promise<RoutinePlanResponse> {
-  return fetchJson<RoutinePlanResponse>('/api/ai/routine', {
-    method: 'POST',
-    body: JSON.stringify({ airQuality, profile }),
+  const body = JSON.stringify({
+    airQuality,
+    profile,
+    aqiScale: options?.aqiScale ?? 'us_epa',
+    forceRefresh: Boolean(options?.forceRefresh),
   });
+  return fetchJson<RoutinePlanResponse>(
+    '/api/ai/routine',
+    { method: 'POST', body },
+    options?.forceRefresh ? undefined : `POST:/api/ai/routine:${body}`
+  );
 }
 
 export function requestIndoorGuidance(
   airQuality: AirQualityData | null,
-  profile: HouseholdProfile
+  profile: HouseholdProfile,
+  options?: { aqiScale?: AQIScaleId; forceRefresh?: boolean }
 ): Promise<IndoorGuidanceResponse> {
-  return fetchJson<IndoorGuidanceResponse>('/api/ai/indoor', {
-    method: 'POST',
-    body: JSON.stringify({ airQuality, profile }),
+  const body = JSON.stringify({
+    airQuality,
+    profile,
+    aqiScale: options?.aqiScale ?? 'us_epa',
+    forceRefresh: Boolean(options?.forceRefresh),
   });
+  return fetchJson<IndoorGuidanceResponse>(
+    '/api/ai/indoor',
+    { method: 'POST', body },
+    options?.forceRefresh ? undefined : `POST:/api/ai/indoor:${body}`
+  );
 }
 
 export function requestHealthAdvisory(
   request: HealthAdvisoryAiRequest
 ): Promise<HealthAdvisoryAiResponse> {
-  return fetchJson<HealthAdvisoryAiResponse>('/api/ai/health-advisory', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
+  const body = JSON.stringify(request);
+  return fetchJson<HealthAdvisoryAiResponse>(
+    '/api/ai/health-advisory',
+    { method: 'POST', body },
+    request.forceRefresh ? undefined : `POST:/api/ai/health-advisory:${body}`
+  );
 }
 
 export function requestSustainableChoices(
   request: SustainableChoicesRequest
 ): Promise<SustainableChoicesResponse> {
-  return fetchJson<SustainableChoicesResponse>('/api/ai/sustainable', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
+  const body = JSON.stringify(request);
+  return fetchJson<SustainableChoicesResponse>(
+    '/api/ai/sustainable',
+    { method: 'POST', body },
+    request.forceRefresh ? undefined : `POST:/api/ai/sustainable:${body}`
+  );
 }
 
 export function requestCommunityPlan(
   request: CommunityPlanRequest
 ): Promise<CommunityPlanResponse> {
-  return fetchJson<CommunityPlanResponse>('/api/ai/community', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
+  const body = JSON.stringify(request);
+  return fetchJson<CommunityPlanResponse>(
+    '/api/ai/community',
+    { method: 'POST', body },
+    request.forceRefresh ? undefined : `POST:/api/ai/community:${body}`
+  );
 }
 
 export function sendAssistantMessage(params: {
@@ -148,9 +203,17 @@ export function sendAssistantMessage(params: {
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
   airQuality: AirQualityData | null;
   profile: HouseholdProfile | null;
+  aqiScale?: AQIScaleId;
+  forceRefresh?: boolean;
 }): Promise<ChatApiResponse> {
-  return fetchJson<ChatApiResponse>('/api/ai/chat', {
-    method: 'POST',
-    body: JSON.stringify(params),
+  const body = JSON.stringify({
+    ...params,
+    aqiScale: params.aqiScale ?? 'us_epa',
+    forceRefresh: Boolean(params.forceRefresh),
   });
+  return fetchJson<ChatApiResponse>(
+    '/api/ai/chat',
+    { method: 'POST', body },
+    params.forceRefresh ? undefined : `POST:/api/ai/chat:${body}`
+  );
 }

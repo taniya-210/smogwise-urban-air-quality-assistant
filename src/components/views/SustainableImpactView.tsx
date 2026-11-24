@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AlertCircle, Leaf, Loader2, Sparkles } from 'lucide-react';
 import {
   Bar,
@@ -10,12 +10,12 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AiGroundingBanner } from '../AiGroundingBanner.tsx';
-import { FallbackNoticeBanner } from '../FallbackNoticeBanner.tsx';
+import { AiStatusStrip, CollapsibleDataGrounding } from '../AiGroundingBanner.tsx';
 import { requestSustainableChoices } from '../../services/api.ts';
 import { calculateCommuteImpact, COMMUTE_MODES } from '../../shared/emissions.ts';
 import type {
   AirQualityData,
+  AQIScaleId,
   CommuteModeId,
   HouseholdProfile,
   SustainableChoicesResponse,
@@ -24,6 +24,7 @@ import type {
 interface SustainableImpactViewProps {
   airQuality: AirQualityData | null;
   profile: HouseholdProfile;
+  aqiScale: AQIScaleId;
 }
 
 const BASELINE_SUSTAINABLE_HABITS = [
@@ -59,7 +60,11 @@ const BASELINE_SUSTAINABLE_HABITS = [
   },
 ];
 
-export function SustainableImpactView({ airQuality, profile }: SustainableImpactViewProps) {
+export function SustainableImpactView({
+  airQuality,
+  profile,
+  aqiScale,
+}: SustainableImpactViewProps) {
   const [currentMode, setCurrentMode] = useState<CommuteModeId>(
     profile.commuteMode === 'cycling_walking' || profile.commuteMode === 'remote_work'
       ? 'solo_petrol_car'
@@ -79,19 +84,25 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
   const [generatedContextKey, setGeneratedContextKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
-  const impact = calculateCommuteImpact({
-    currentMode,
-    targetMode,
-    oneWayDistanceKm,
-    daysPerWeek,
-    weeksPerYear,
-  });
+  const impact = useMemo(
+    () =>
+      calculateCommuteImpact({
+        currentMode,
+        targetMode,
+        oneWayDistanceKm,
+        daysPerWeek,
+        weeksPerYear,
+      }),
+    [currentMode, targetMode, oneWayDistanceKm, daysPerWeek, weeksPerYear]
+  );
 
   const currentContextKey = JSON.stringify({
     loc: airQuality?.location.name ?? null,
     mode: airQuality?.mode ?? null,
     aqi: airQuality?.current.usAqi ?? null,
+    scale: aqiScale,
     currentMode,
     targetMode,
     oneWayDistanceKm,
@@ -101,12 +112,14 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
   });
   const contextChanged = Boolean(aiPlan && generatedContextKey && generatedContextKey !== currentContextKey);
 
-  async function runGeneration() {
+  async function runGeneration(forceRefresh = false) {
+    if (inFlightRef.current) return;
     if (!impact.valid) {
       setError(impact.error || 'Please enter valid commute calculator values first.');
       return;
     }
 
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     const keyAtRequest = currentContextKey;
@@ -122,6 +135,8 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
           weeksPerYear,
         },
         householdGoal: householdGoal.trim() || undefined,
+        aqiScale,
+        forceRefresh,
       });
       setAiPlan(result);
       setGeneratedContextKey(keyAtRequest);
@@ -132,29 +147,34 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
           : 'Unable to generate AI sustainable choices plan right now.'
       );
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
 
   function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
-    void runGeneration();
+    void runGeneration(false);
   }
 
-  const comparisonData = impact.valid
-    ? [
-        {
-          name: COMMUTE_MODES[currentMode].label,
-          kgCo2e: impact.annualCurrentKgCo2e,
-          fill: '#0f1d38',
-        },
-        {
-          name: COMMUTE_MODES[targetMode].label,
-          kgCo2e: impact.annualTargetKgCo2e,
-          fill: '#15803d',
-        },
-      ]
-    : [];
+  const comparisonData = useMemo(
+    () =>
+      impact.valid
+        ? [
+            {
+              name: COMMUTE_MODES[currentMode].label,
+              kgCo2e: impact.annualCurrentKgCo2e,
+              fill: '#0f1d38',
+            },
+            {
+              name: COMMUTE_MODES[targetMode].label,
+              kgCo2e: impact.annualTargetKgCo2e,
+              fill: '#15803d',
+            },
+          ]
+        : [],
+    [impact, currentMode, targetMode]
+  );
 
   return (
     <div className="space-y-8">
@@ -442,21 +462,18 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
 
         {aiPlan && !loading && (
           <div className="space-y-6">
-            {aiPlan.generatedBy === 'fallback' && (
-              <FallbackNoticeBanner
-                reason={aiPlan.fallbackReason}
-                category={aiPlan.errorCategory}
-                onRetry={() => void runGeneration()}
-                retrying={loading}
-              />
-            )}
-
-            <AiGroundingBanner
+            <AiStatusStrip
               generatedBy={aiPlan.generatedBy}
-              dataSourcesUsed={aiPlan.dataSourcesUsed}
+              fromCache={aiPlan.fromCache}
+              cachedAt={aiPlan.cachedAt}
+              modelUsed={aiPlan.modelUsed}
+              fallbackReason={aiPlan.fallbackReason}
+              errorCategory={aiPlan.errorCategory}
+              diagnosticDetail={aiPlan.diagnosticDetail}
               contextChanged={contextChanged}
-              contextChangedLabel="Your active city, AQI, or commute calculator parameters changed since this plan was generated."
-              onRegenerate={() => void runGeneration()}
+              contextChangedLabel="Your active city, AQI scale, or commute calculator parameters changed since this plan was generated."
+              onRegenerate={() => void runGeneration(false)}
+              onRetryGemini={() => void runGeneration(true)}
               regenerating={loading}
             />
 
@@ -490,7 +507,7 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
                       {rec.smogConditionNote}
                     </p>
                     <p>
-                      <span className="font-semibold text-slate-700">Assumptions & limits:</span>{' '}
+                      <span className="font-semibold text-slate-700">Assumptions &amp; limits:</span>{' '}
                       {rec.assumptionsAndLimits}
                     </p>
                   </div>
@@ -498,19 +515,17 @@ export function SustainableImpactView({ airQuality, profile }: SustainableImpact
               ))}
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-6 space-y-3">
-              <h4 className="text-sm font-bold text-slate-900">
-                Disclosed Assumptions & Impact Boundaries
-              </h4>
-              <ul className="space-y-1.5 text-xs text-slate-600 list-disc pl-5">
-                {aiPlan.assumptionsDisclosure.map((item, idx) => (
-                  <li key={idx}>{item}</li>
-                ))}
-              </ul>
-              <p className="text-xs text-slate-500 pt-2 border-t border-slate-200">
-                {aiPlan.disclaimer}
-              </p>
-            </div>
+            <CollapsibleDataGrounding
+              generatedBy={aiPlan.generatedBy}
+              fromCache={aiPlan.fromCache}
+              cachedAt={aiPlan.cachedAt}
+              modelUsed={aiPlan.modelUsed}
+              airQuality={airQuality}
+              aqiScale={aiPlan.aqiScale ?? aqiScale}
+              dataSourcesUsed={aiPlan.dataSourcesUsed}
+              assumptions={aiPlan.assumptionsDisclosure}
+              disclaimer={aiPlan.disclaimer}
+            />
           </div>
         )}
       </section>

@@ -1,7 +1,10 @@
 import type {
+  AirQualityData,
   AQICategoryName,
+  AQIScaleId,
   DataMode,
   HourlyAirQualityPoint,
+  LocationInfo,
   PollutantReadings,
 } from './types.ts';
 
@@ -15,6 +18,7 @@ export interface DataFreshnessInfo {
 export interface AQICategoryMeta {
   name: AQICategoryName;
   level: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  /** Range string for the active scale (e.g. '0 – 50', '301 – 400', '301+') */
   epaRange: string;
   shortGuidance: string;
   isSevere: boolean;
@@ -25,8 +29,23 @@ export interface AQICategoryMeta {
   barHex: string;
 }
 
+export interface ComputedScaleAQI {
+  scale: AQIScaleId;
+  scaleLabel: string;
+  shortScaleLabel: string;
+  value: number | null;
+  category: AQICategoryMeta;
+  dominantSubIndexPollutant: string | null;
+  pollutantsUsed: string[];
+  isCalculatedFromConcentrations: boolean;
+  isOfficialCpcbReading: boolean;
+  limitationNote: string | null;
+  methodologyNote: string;
+}
+
 export interface SaferWindowResult {
   available: boolean;
+  scale: AQIScaleId;
   startLabel: string | null;
   endLabel: string | null;
   averageAqi: number | null;
@@ -45,6 +64,7 @@ export interface FamilyAdvisoryGroup {
 }
 
 export interface FamilyHealthAdvisory {
+  scale: AQIScaleId;
   aqiCategory: AQICategoryMeta;
   severeWarning: string | null;
   medicalDisclaimer: string;
@@ -67,7 +87,8 @@ export const EPA_AQI_SCALE: AQICategoryMeta[] = [
     name: 'Moderate',
     level: 2,
     epaRange: '51 – 100',
-    shortGuidance: 'Acceptable air quality; unusually sensitive individuals should consider limiting prolonged outdoor exertion.',
+    shortGuidance:
+      'Acceptable air quality; unusually sensitive individuals should consider limiting prolonged outdoor exertion.',
     isSevere: false,
     textClass: 'text-amber-900',
     surfaceClass: 'bg-amber-50',
@@ -78,7 +99,8 @@ export const EPA_AQI_SCALE: AQICategoryMeta[] = [
     name: 'Unhealthy for Sensitive Groups',
     level: 3,
     epaRange: '101 – 150',
-    shortGuidance: 'Children, older adults, and people with heart or lung conditions should reduce prolonged or heavy outdoor exertion.',
+    shortGuidance:
+      'Children, older adults, and people with heart or lung conditions should reduce prolonged or heavy outdoor exertion.',
     isSevere: false,
     textClass: 'text-orange-900',
     surfaceClass: 'bg-orange-50',
@@ -89,7 +111,8 @@ export const EPA_AQI_SCALE: AQICategoryMeta[] = [
     name: 'Unhealthy',
     level: 4,
     epaRange: '151 – 200',
-    shortGuidance: 'Everyone may begin to experience respiratory irritation; sensitive groups should avoid prolonged outdoor exertion.',
+    shortGuidance:
+      'Everyone may begin to experience respiratory irritation; sensitive groups should avoid prolonged outdoor exertion.',
     isSevere: false,
     textClass: 'text-red-900',
     surfaceClass: 'bg-red-50',
@@ -100,7 +123,8 @@ export const EPA_AQI_SCALE: AQICategoryMeta[] = [
     name: 'Very Unhealthy',
     level: 5,
     epaRange: '201 – 300',
-    shortGuidance: 'Health alert: risk of adverse respiratory and cardiovascular effects increases for everyone. Move activities indoors.',
+    shortGuidance:
+      'Health alert: risk of adverse respiratory and cardiovascular effects increases for everyone. Move activities indoors.',
     isSevere: true,
     textClass: 'text-purple-950',
     surfaceClass: 'bg-purple-50',
@@ -111,7 +135,85 @@ export const EPA_AQI_SCALE: AQICategoryMeta[] = [
     name: 'Hazardous',
     level: 6,
     epaRange: '301+',
-    shortGuidance: 'Health warning of emergency conditions: everyone should avoid all outdoor physical activity and keep indoor air filtered.',
+    shortGuidance:
+      'Health warning of emergency conditions: everyone should avoid all outdoor physical activity and keep indoor air filtered.',
+    isSevere: true,
+    textClass: 'text-rose-950',
+    surfaceClass: 'bg-rose-100',
+    borderClass: 'border-rose-300',
+    barHex: '#881337',
+  },
+];
+
+/**
+ * Official India Central Pollution Control Board (CPCB) National Air Quality Index (NAQI) scale (0–500).
+ * Distinct breakpoints and category thresholds from US EPA AQI.
+ */
+export const INDIA_CPCB_SCALE: AQICategoryMeta[] = [
+  {
+    name: 'Good',
+    level: 1,
+    epaRange: '0 – 50',
+    shortGuidance: 'Minimal impact on health; suitable for normal outdoor activities and ventilation.',
+    isSevere: false,
+    textClass: 'text-emerald-800',
+    surfaceClass: 'bg-emerald-50',
+    borderClass: 'border-emerald-200',
+    barHex: '#15803d',
+  },
+  {
+    name: 'Satisfactory',
+    level: 2,
+    epaRange: '51 – 100',
+    shortGuidance: 'Minor breathing discomfort to sensitive people; generally acceptable for routine activities.',
+    isSevere: false,
+    textClass: 'text-lime-900',
+    surfaceClass: 'bg-lime-50',
+    borderClass: 'border-lime-200',
+    barHex: '#65a30d',
+  },
+  {
+    name: 'Moderately Polluted',
+    level: 3,
+    epaRange: '101 – 200',
+    shortGuidance:
+      'Breathing discomfort to people with lung disease such as asthma, heart disease, children, and older adults.',
+    isSevere: false,
+    textClass: 'text-amber-900',
+    surfaceClass: 'bg-amber-50',
+    borderClass: 'border-amber-200',
+    barHex: '#ca8a04',
+  },
+  {
+    name: 'Poor',
+    level: 4,
+    epaRange: '201 – 300',
+    shortGuidance:
+      'Breathing discomfort to most people on prolonged exposure; reduce vigorous outdoor exercise.',
+    isSevere: false,
+    textClass: 'text-orange-900',
+    surfaceClass: 'bg-orange-50',
+    borderClass: 'border-orange-200',
+    barHex: '#ea580c',
+  },
+  {
+    name: 'Very Poor',
+    level: 5,
+    epaRange: '301 – 400',
+    shortGuidance:
+      'Respiratory illness on prolonged exposure; pronounced impact on people with lung and heart disease. Shift activities indoors.',
+    isSevere: true,
+    textClass: 'text-red-900',
+    surfaceClass: 'bg-red-50',
+    borderClass: 'border-red-200',
+    barHex: '#dc2626',
+  },
+  {
+    name: 'Severe',
+    level: 6,
+    epaRange: '401 – 500',
+    shortGuidance:
+      'Affects healthy people and seriously impacts those with existing respiratory or heart conditions. Avoid outdoor exertion and keep indoor air filtered.',
     isSevere: true,
     textClass: 'text-rose-950',
     surfaceClass: 'bg-rose-100',
@@ -124,7 +226,7 @@ export const UNAVAILABLE_AQI_META: AQICategoryMeta = {
   name: 'Unavailable',
   level: 0,
   epaRange: 'No reading',
-  shortGuidance: 'Live air quality measurements are currently unavailable for this location.',
+  shortGuidance: 'Air quality readings are currently unavailable for this location or scale.',
   isSevere: false,
   textClass: 'text-slate-700',
   surfaceClass: 'bg-slate-50',
@@ -132,11 +234,43 @@ export const UNAVAILABLE_AQI_META: AQICategoryMeta = {
   barHex: '#64748b',
 };
 
-export function getAQICategory(aqi: number | null | undefined): AQICategoryMeta {
+export function isLocationInIndia(location: LocationInfo | null | undefined): boolean {
+  if (!location) return false;
+  const country = (location.country || '').trim().toLowerCase();
+  const tz = (location.timezone || '').trim().toLowerCase();
+  return country === 'india' || country.includes('india') || tz === 'asia/kolkata' || tz === 'asia/calcutta';
+}
+
+export function getScaleDisplayLabel(scale: AQIScaleId): string {
+  return scale === 'india_cpcb' ? 'India CPCB NAQI (0–500)' : 'US EPA AQI (0–500)';
+}
+
+export function getScaleShortLabel(scale: AQIScaleId): string {
+  return scale === 'india_cpcb' ? 'India CPCB NAQI' : 'US EPA AQI';
+}
+
+export function getScaleReferenceTable(scale: AQIScaleId): AQICategoryMeta[] {
+  return scale === 'india_cpcb' ? INDIA_CPCB_SCALE : EPA_AQI_SCALE;
+}
+
+export function getAQICategory(
+  aqi: number | null | undefined,
+  scale: AQIScaleId = 'us_epa'
+): AQICategoryMeta {
   if (aqi === null || aqi === undefined || !Number.isFinite(aqi) || aqi < 0) {
     return UNAVAILABLE_AQI_META;
   }
   const rounded = Math.round(aqi);
+
+  if (scale === 'india_cpcb') {
+    if (rounded <= 50) return INDIA_CPCB_SCALE[0];
+    if (rounded <= 100) return INDIA_CPCB_SCALE[1];
+    if (rounded <= 200) return INDIA_CPCB_SCALE[2];
+    if (rounded <= 300) return INDIA_CPCB_SCALE[3];
+    if (rounded <= 400) return INDIA_CPCB_SCALE[4];
+    return INDIA_CPCB_SCALE[5];
+  }
+
   if (rounded <= 50) return EPA_AQI_SCALE[0];
   if (rounded <= 100) return EPA_AQI_SCALE[1];
   if (rounded <= 150) return EPA_AQI_SCALE[2];
@@ -171,6 +305,265 @@ export function calculatePm25SubIndex(pm25: number): number | null {
   return Math.round(500 + ((c - 325.4) / 100) * 100);
 }
 
+type CpcbPollutantKey = 'pm25' | 'pm10' | 'no2' | 'o3' | 'so2' | 'co';
+
+/**
+ * Official India CPCB NAQI pollutant concentration breakpoints.
+ * PM2.5, PM10, NO2, O3, SO2 in µg/m³; CO in mg/m³ (converted from µg/m³ / 1000).
+ * Reference: CPCB National Air Quality Index Technical Report (2014).
+ */
+const INDIA_CPCB_BREAKPOINTS: Record<
+  CpcbPollutantKey,
+  Array<[number, number, number, number]>
+> = {
+  pm25: [
+    [0, 30, 0, 50],
+    [30, 60, 51, 100],
+    [60, 90, 101, 200],
+    [90, 120, 201, 300],
+    [120, 250, 301, 400],
+    [250, 380, 401, 500],
+  ],
+  pm10: [
+    [0, 50, 0, 50],
+    [50, 100, 51, 100],
+    [100, 250, 101, 200],
+    [250, 350, 201, 300],
+    [350, 430, 301, 400],
+    [430, 510, 401, 500],
+  ],
+  no2: [
+    [0, 40, 0, 50],
+    [40, 80, 51, 100],
+    [80, 180, 101, 200],
+    [180, 280, 201, 300],
+    [280, 400, 301, 400],
+    [400, 520, 401, 500],
+  ],
+  o3: [
+    [0, 50, 0, 50],
+    [50, 100, 51, 100],
+    [100, 168, 101, 200],
+    [168, 208, 201, 300],
+    [208, 748, 301, 400],
+    [748, 1000, 401, 500],
+  ],
+  so2: [
+    [0, 40, 0, 50],
+    [40, 80, 51, 100],
+    [80, 380, 101, 200],
+    [380, 800, 201, 300],
+    [800, 1600, 301, 400],
+    [1600, 2400, 401, 500],
+  ],
+  // CO breakpoints in mg/m³ (function converts input µg/m³ -> mg/m³)
+  co: [
+    [0, 1.0, 0, 50],
+    [1.0, 2.0, 51, 100],
+    [2.0, 10.0, 101, 200],
+    [10.0, 17.0, 201, 300],
+    [17.0, 34.0, 301, 400],
+    [34.0, 51.0, 401, 500],
+  ],
+};
+
+const CPCB_POLLUTANT_SYMBOLS: Record<CpcbPollutantKey, string> = {
+  pm25: 'PM2.5',
+  pm10: 'PM10',
+  no2: 'NO₂',
+  o3: 'O₃',
+  so2: 'SO₂',
+  co: 'CO',
+};
+
+/**
+ * Calculates an individual pollutant sub-index using India CPCB NAQI linear breakpoints.
+ * Input concentration is always in µg/m³ (CO is converted internally from µg/m³ to mg/m³).
+ */
+export function calculateIndiaCpcbSubIndex(
+  pollutant: CpcbPollutantKey,
+  concentrationUgM3: number | null | undefined
+): number | null {
+  if (
+    concentrationUgM3 === null ||
+    concentrationUgM3 === undefined ||
+    !Number.isFinite(concentrationUgM3) ||
+    concentrationUgM3 < 0
+  ) {
+    return null;
+  }
+
+  const c = pollutant === 'co' ? concentrationUgM3 / 1000 : concentrationUgM3;
+  const table = INDIA_CPCB_BREAKPOINTS[pollutant];
+
+  for (const [cLow, cHigh, iLow, iHigh] of table) {
+    if (c >= cLow && c <= cHigh) {
+      const value = ((iHigh - iLow) / (cHigh - cLow)) * (c - cLow) + iLow;
+      return Math.min(500, Math.max(0, Math.round(value)));
+    }
+  }
+
+  // CPCB NAQI caps the published scale at 500 for concentrations above the Severe upper breakpoint
+  return 500;
+}
+
+export interface IndiaCpcbComputation {
+  aqi: number | null;
+  dominantPollutant: string | null;
+  pollutantsUsed: string[];
+  subIndices: Partial<Record<CpcbPollutantKey, number>>;
+  sufficientData: boolean;
+  limitationNote: string | null;
+}
+
+/**
+ * Computes India CPCB NAQI from available pollutant concentrations (µg/m³).
+ * Follows CPCB minimum-data rule: requires at least 3 pollutants with at least one of PM2.5 or PM10.
+ * Never fabricates missing pollutants or claims official CPCB CAAQMS measurement status.
+ */
+export function calculateIndiaCpcbAqi(
+  readings: Partial<Pick<PollutantReadings, CpcbPollutantKey>>
+): IndiaCpcbComputation {
+  const keys: CpcbPollutantKey[] = ['pm25', 'pm10', 'no2', 'o3', 'so2', 'co'];
+  const subIndices: Partial<Record<CpcbPollutantKey, number>> = {};
+  const pollutantsUsed: string[] = [];
+
+  for (const key of keys) {
+    const sub = calculateIndiaCpcbSubIndex(key, readings[key]);
+    if (sub !== null) {
+      subIndices[key] = sub;
+      pollutantsUsed.push(CPCB_POLLUTANT_SYMBOLS[key]);
+    }
+  }
+
+  const hasParticulate = subIndices.pm25 !== undefined || subIndices.pm10 !== undefined;
+  const sufficientData = hasParticulate && pollutantsUsed.length >= 3;
+
+  if (!sufficientData) {
+    const reason = !hasParticulate
+      ? 'India CPCB NAQI requires PM2.5 or PM10 concentration data along with at least 3 pollutants in total. The active source does not provide sufficient particulate readings.'
+      : `India CPCB NAQI requires at least 3 pollutants (including PM2.5 or PM10); only ${pollutantsUsed.length} (${pollutantsUsed.join(', ') || 'none'}) available from this source.`;
+    return {
+      aqi: null,
+      dominantPollutant: null,
+      pollutantsUsed,
+      subIndices,
+      sufficientData: false,
+      limitationNote: reason,
+    };
+  }
+
+  let maxKey: CpcbPollutantKey | null = null;
+  let maxVal = -1;
+  for (const key of keys) {
+    const sub = subIndices[key];
+    if (sub !== undefined && sub > maxVal) {
+      maxVal = sub;
+      maxKey = key;
+    }
+  }
+
+  return {
+    aqi: maxVal >= 0 ? maxVal : null,
+    dominantPollutant: maxKey ? CPCB_POLLUTANT_SYMBOLS[maxKey] : null,
+    pollutantsUsed,
+    subIndices,
+    sufficientData: true,
+    limitationNote:
+      'Estimated using India CPCB NAQI breakpoints from current/hourly pollutant concentrations (max sub-index). Official CPCB bulletins use 24-hour rolling averages from CAAQMS ground stations.',
+  };
+}
+
+/**
+ * Returns the active AQI value, category, methodology disclosure, and limitation notice
+ * for either US EPA AQI or India CPCB NAQI without ever relabeling one scale's number as another.
+ */
+export function getScaleAQI(
+  airQuality: AirQualityData | null,
+  scale: AQIScaleId
+): ComputedScaleAQI {
+  const scaleLabel = getScaleDisplayLabel(scale);
+  const shortScaleLabel = getScaleShortLabel(scale);
+
+  if (!airQuality || airQuality.mode === 'unavailable') {
+    return {
+      scale,
+      scaleLabel,
+      shortScaleLabel,
+      value: null,
+      category: UNAVAILABLE_AQI_META,
+      dominantSubIndexPollutant: null,
+      pollutantsUsed: [],
+      isCalculatedFromConcentrations: false,
+      isOfficialCpcbReading: false,
+      limitationNote: airQuality?.unavailableReason || 'Live air quality readings are currently unavailable.',
+      methodologyNote: 'No active readings available to compute an index.',
+    };
+  }
+
+  if (scale === 'india_cpcb') {
+    const cpcb = calculateIndiaCpcbAqi(airQuality.current);
+    const cat = getAQICategory(cpcb.aqi, 'india_cpcb');
+    return {
+      scale,
+      scaleLabel,
+      shortScaleLabel,
+      value: cpcb.aqi,
+      category: cat,
+      dominantSubIndexPollutant: cpcb.dominantPollutant,
+      pollutantsUsed: cpcb.pollutantsUsed,
+      isCalculatedFromConcentrations: true,
+      isOfficialCpcbReading: false,
+      limitationNote: cpcb.limitationNote,
+      methodologyNote:
+        cpcb.sufficientData
+          ? `Derived via CPCB NAQI sub-index breakpoints (max of ${cpcb.pollutantsUsed.join(', ')}) from ${airQuality.source.name}. Not an official CPCB CAAQMS station bulletin.`
+          : cpcb.limitationNote || 'Insufficient pollutant data to calculate India CPCB NAQI.',
+    };
+  }
+
+  const usAqi = airQuality.current.usAqi;
+  const cat = getAQICategory(usAqi, 'us_epa');
+  const availablePollutants = buildPollutantDetails(airQuality.current)
+    .filter((p) => p.value !== null)
+    .map((p) => p.symbol);
+
+  return {
+    scale,
+    scaleLabel,
+    shortScaleLabel,
+    value: usAqi,
+    category: cat,
+    dominantSubIndexPollutant: null,
+    pollutantsUsed: availablePollutants,
+    isCalculatedFromConcentrations: false,
+    isOfficialCpcbReading: false,
+    limitationNote:
+      usAqi === null
+        ? 'US EPA AQI was not reported by the active data source.'
+        : airQuality.source.isEstimated
+          ? 'US EPA AQI reported by Open-Meteo CAMS atmospheric model (distinct from India CPCB NAQI and official government monitoring stations).'
+          : null,
+    methodologyNote: `US EPA AQI (0–500) sourced directly from ${airQuality.source.name}.`,
+  };
+}
+
+export function getHourlyAqiForScale(
+  pt: HourlyAirQualityPoint,
+  scale: AQIScaleId
+): number | null {
+  if (scale === 'us_epa') {
+    return pt.usAqi !== null && Number.isFinite(pt.usAqi) ? Math.round(pt.usAqi) : null;
+  }
+  const cpcb = calculateIndiaCpcbAqi({
+    pm25: pt.pm25,
+    pm10: pt.pm10,
+    no2: pt.no2,
+    o3: pt.o3,
+  });
+  return cpcb.aqi;
+}
+
 export function formatHourLabel(isoLocalTime: string): string {
   const match = isoLocalTime.match(/T(\d{2}):(\d{2})/);
   if (!match) return isoLocalTime;
@@ -181,25 +574,32 @@ export function formatHourLabel(isoLocalTime: string): string {
 }
 
 /**
- * Finds the lowest-AQI 3-hour window across available hourly data.
- * Never fabricates a window when hourly AQI points are missing.
+ * Finds the lowest-AQI 3-hour window across available hourly data for the active AQI scale.
+ * Never fabricates a window when hourly points are missing.
  */
-export function findSaferOutdoorWindows(hourly: HourlyAirQualityPoint[]): SaferWindowResult {
-  const validPoints = hourly.filter(
-    (p): p is HourlyAirQualityPoint & { usAqi: number } =>
-      p.usAqi !== null && Number.isFinite(p.usAqi)
-  );
+export function findSaferOutdoorWindows(
+  hourly: HourlyAirQualityPoint[],
+  scale: AQIScaleId = 'us_epa'
+): SaferWindowResult {
+  const validPoints = hourly
+    .map((p) => ({
+      time: p.time,
+      aqi: getHourlyAqiForScale(p, scale),
+    }))
+    .filter((p): p is { time: string; aqi: number } => p.aqi !== null && Number.isFinite(p.aqi));
+
+  const shortScale = getScaleShortLabel(scale);
 
   if (validPoints.length < 3) {
     return {
       available: false,
+      scale,
       startLabel: null,
       endLabel: null,
       averageAqi: null,
       peakAqi: null,
       peakHourLabel: null,
-      explanation:
-        'Sufficient hourly air quality readings are not available to identify a safer outdoor time window.',
+      explanation: `Sufficient hourly readings are not available to identify a safer outdoor window on the ${shortScale} scale.`,
     };
   }
 
@@ -207,7 +607,7 @@ export function findSaferOutdoorWindows(hourly: HourlyAirQualityPoint[]): SaferW
   let bestAvg = Number.POSITIVE_INFINITY;
 
   for (let i = 0; i <= validPoints.length - 3; i++) {
-    const avg = (validPoints[i].usAqi + validPoints[i + 1].usAqi + validPoints[i + 2].usAqi) / 3;
+    const avg = (validPoints[i].aqi + validPoints[i + 1].aqi + validPoints[i + 2].aqi) / 3;
     if (avg < bestAvg) {
       bestAvg = avg;
       bestStartIdx = i;
@@ -216,7 +616,7 @@ export function findSaferOutdoorWindows(hourly: HourlyAirQualityPoint[]): SaferW
 
   let peakPoint = validPoints[0];
   for (const pt of validPoints) {
-    if (pt.usAqi > peakPoint.usAqi) {
+    if (pt.aqi > peakPoint.aqi) {
       peakPoint = pt;
     }
   }
@@ -224,22 +624,24 @@ export function findSaferOutdoorWindows(hourly: HourlyAirQualityPoint[]): SaferW
   const startLabel = formatHourLabel(validPoints[bestStartIdx].time);
   const endLabel = formatHourLabel(validPoints[bestStartIdx + 2].time);
   const avgRounded = Math.round(bestAvg);
-  const peakRounded = Math.round(peakPoint.usAqi);
+  const peakRounded = Math.round(peakPoint.aqi);
   const peakHourLabel = formatHourLabel(peakPoint.time);
+  const avgCat = getAQICategory(avgRounded, scale);
 
   let explanation: string;
-  if (avgRounded <= 50) {
-    explanation = `Lowest pollution is projected between ${startLabel} and ${endLabel} (avg US AQI ${avgRounded}), suitable for normal outdoor activity.`;
-  } else if (avgRounded <= 100) {
-    explanation = `Relatively cleaner air occurs between ${startLabel} and ${endLabel} (avg US AQI ${avgRounded}), compared to the daily peak of ${peakRounded} around ${peakHourLabel}.`;
-  } else if (avgRounded <= 150) {
-    explanation = `The least polluted window is ${startLabel} to ${endLabel} (avg US AQI ${avgRounded}). Keep outdoor errands brief and avoid the ${peakHourLabel} peak (AQI ${peakRounded}).`;
+  if (avgCat.level <= 1) {
+    explanation = `Lowest pollution is projected between ${startLabel} and ${endLabel} (avg ${shortScale} ${avgRounded} — ${avgCat.name}), suitable for normal outdoor activity.`;
+  } else if (avgCat.level === 2) {
+    explanation = `Relatively cleaner air occurs between ${startLabel} and ${endLabel} (avg ${shortScale} ${avgRounded} — ${avgCat.name}), compared to the daily peak of ${peakRounded} around ${peakHourLabel}.`;
+  } else if (avgCat.level === 3) {
+    explanation = `The least polluted window is ${startLabel} to ${endLabel} (avg ${shortScale} ${avgRounded} — ${avgCat.name}). Keep outdoor errands brief and avoid the ${peakHourLabel} peak (${peakRounded}).`;
   } else {
-    explanation = `Even the lowest 3-hour window (${startLabel}–${endLabel}, avg US AQI ${avgRounded}) remains unhealthy. Restrict outdoor time to essential travel only and avoid peak smog around ${peakHourLabel} (AQI ${peakRounded}).`;
+    explanation = `Even the lowest 3-hour window (${startLabel}–${endLabel}, avg ${shortScale} ${avgRounded} — ${avgCat.name}) remains elevated. Restrict outdoor time to essential travel and avoid peak smog around ${peakHourLabel} (${peakRounded}).`;
   }
 
   return {
     available: true,
+    scale,
     startLabel,
     endLabel,
     averageAqi: avgRounded,
@@ -365,7 +767,6 @@ export function getDataFreshness(
     };
   }
 
-  // Prefer fetchedAt when reading timestamp lacks timezone offset (e.g. local wall clock "YYYY-MM-DDTHH:mm")
   const hasExplicitTz = Boolean(timestamp && /(Z|[+-]\d{2}:?\d{2})$/.test(timestamp));
   const candidate = hasExplicitTz ? timestamp : fetchedAt || timestamp;
 
@@ -423,13 +824,22 @@ export function getDataFreshness(
   };
 }
 
-export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisory {
-  const meta = getAQICategory(aqi);
-  const medicalDisclaimer =
-    'General public-health precautionary guidance calibrated to the US EPA AQI scale (0–500; distinct from India’s CPCB NAQI scale). SmogWise does not diagnose medical conditions or replace advice from a licensed healthcare professional. Seek prompt medical care for severe shortness of breath, chest pain, or worsening asthma symptoms.';
+export function getFamilyHealthGuidance(
+  aqi: number | null,
+  scale: AQIScaleId = 'us_epa'
+): FamilyHealthAdvisory {
+  const meta = getAQICategory(aqi, scale);
+  const scaleLabel = getScaleDisplayLabel(scale);
+  const otherScaleNote =
+    scale === 'india_cpcb'
+      ? 'distinct from US EPA AQI breakpoints; calculated from available pollutant concentrations rather than an official CPCB CAAQMS bulletin'
+      : 'distinct from India’s CPCB NAQI scale';
+
+  const medicalDisclaimer = `General public-health precautionary guidance calibrated to the ${scaleLabel} scale (${otherScaleNote}). SmogWise does not diagnose medical conditions or replace advice from a licensed healthcare professional. Seek prompt medical care for severe shortness of breath, chest pain, or worsening asthma symptoms.`;
 
   if (meta.level === 0) {
     return {
+      scale,
       aqiCategory: meta,
       severeWarning: null,
       medicalDisclaimer,
@@ -438,7 +848,8 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           id: 'children',
           label: 'Children',
           riskSummary: 'Local AQI is unavailable; apply visual visibility and local public-health alerts.',
-          outdoorGuidance: 'If haze, smoke odor, or local government advisories are present, shift vigorous play indoors.',
+          outdoorGuidance:
+            'If haze, smoke odor, or local government advisories are present, shift vigorous play indoors.',
           protectiveSteps: [
             'Check official municipal or national air-monitoring bulletins before outdoor sports.',
             'Keep rescue inhalers accessible if a child has diagnosed asthma.',
@@ -448,8 +859,9 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
         {
           id: 'adults',
           label: 'Adults',
-          riskSummary: 'Unable to quantify current outdoor risk without a live AQI reading.',
-          outdoorGuidance: 'Avoid heavy exercise directly beside high-traffic arterial roads during winter inversions.',
+          riskSummary: 'Unable to quantify current outdoor risk without an active AQI reading.',
+          outdoorGuidance:
+            'Avoid heavy exercise directly beside high-traffic arterial roads during winter inversions.',
           protectiveSteps: [
             'Choose parks or low-traffic streets when walking or cycling.',
             'Use kitchen exhaust fans when cooking at high heat indoors.',
@@ -482,14 +894,24 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
     };
   }
 
-  const severeWarning = meta.isSevere
-    ? meta.level === 6
-      ? 'Hazardous Air Quality Warning (AQI 301+): Avoid all outdoor physical exertion. Keep doors and windows tightly closed, run True HEPA filtration if available, and use a well-fitting N95/KN95/KF94 respirator if outdoor travel is unavoidable.'
-      : 'Severe Smog Health Alert (AQI 201–300): Move exercise and children’s play indoors. Limit outdoor travel to essential trips and wear a well-fitting particulate respirator (N95/KF94) outdoors.'
-    : null;
+  let severeWarning: string | null = null;
+  if (meta.isSevere) {
+    if (scale === 'india_cpcb') {
+      severeWarning =
+        meta.level === 6
+          ? `Severe Air Quality Warning (India CPCB NAQI ${meta.epaRange}): Affects healthy people and seriously impacts those with lung or heart conditions. Avoid outdoor physical exertion, keep doors/windows closed, run True HEPA filtration if available, and use a well-fitting N95/KF94 respirator for unavoidable travel.`
+          : `Very Poor Air Quality Alert (India CPCB NAQI ${meta.epaRange}): Prolonged exposure increases respiratory illness risk. Move exercise and children’s play indoors, limit outdoor travel, and wear a well-fitting N95/KF94 respirator outdoors.`;
+    } else {
+      severeWarning =
+        meta.level === 6
+          ? 'Hazardous Air Quality Warning (US EPA AQI 301+): Avoid all outdoor physical exertion. Keep doors and windows tightly closed, run True HEPA filtration if available, and use a well-fitting N95/KN95/KF94 respirator if outdoor travel is unavoidable.'
+          : 'Severe Smog Health Alert (US EPA AQI 201–300): Move exercise and children’s play indoors. Limit outdoor travel to essential trips and wear a well-fitting particulate respirator (N95/KF94) outdoors.';
+    }
+  }
 
   if (meta.level <= 2) {
     return {
+      scale,
       aqiCategory: meta,
       severeWarning,
       medicalDisclaimer,
@@ -497,7 +919,10 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
         {
           id: 'children',
           label: 'Children',
-          riskSummary: meta.level === 1 ? 'Low risk for outdoor play and school sports.' : 'Low to mild risk; most children can stay active outdoors.',
+          riskSummary:
+            meta.level === 1
+              ? 'Low risk for outdoor play and school sports.'
+              : 'Low to mild risk; most children can stay active outdoors.',
           outdoorGuidance:
             meta.level === 1
               ? 'Normal outdoor play, walking to school, and sports are appropriate.'
@@ -511,7 +936,10 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
         {
           id: 'adults',
           label: 'Adults',
-          riskSummary: meta.level === 1 ? 'Favorable air quality for commuting and exercise.' : 'Generally acceptable for routine outdoor activities.',
+          riskSummary:
+            meta.level === 1
+              ? 'Favorable air quality for commuting and exercise.'
+              : 'Generally acceptable for routine outdoor activities.',
           outdoorGuidance: 'Good window for walking, cycling, and ventilating indoor living spaces.',
           protectiveSteps: [
             'Open windows briefly to refresh indoor air, especially after cooking.',
@@ -523,7 +951,8 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           id: 'older_adults',
           label: 'Older Adults',
           riskSummary: 'Generally safe conditions for daily walks and errands.',
-          outdoorGuidance: 'Continue regular outdoor walks; choose quieter green routes away from diesel traffic.',
+          outdoorGuidance:
+            'Continue regular outdoor walks; choose quieter green routes away from diesel traffic.',
           protectiveSteps: [
             'Monitor local trends if winter inversion forecasts suggest evening buildup.',
             'Maintain routine medication schedules.',
@@ -533,7 +962,10 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
         {
           id: 'respiratory',
           label: 'Respiratory Sensitivities',
-          riskSummary: meta.level === 1 ? 'Low ambient trigger risk.' : 'Mild sensitivity possible during prolonged outdoor exertion.',
+          riskSummary:
+            meta.level === 1
+              ? 'Low ambient trigger risk.'
+              : 'Mild sensitivity possible during prolonged outdoor exertion.',
           outdoorGuidance:
             meta.level === 1
               ? 'Normal outdoor activity while following your standard management plan.'
@@ -550,6 +982,7 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
 
   if (meta.level <= 4) {
     return {
+      scale,
       aqiCategory: meta,
       severeWarning,
       medicalDisclaimer,
@@ -560,7 +993,7 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           riskSummary:
             meta.level === 3
               ? 'Elevated exposure risk because children breathe faster per body weight.'
-              : 'Unhealthy air for prolonged outdoor exertion.',
+              : 'Poor/unhealthy air for prolonged outdoor exertion.',
           outdoorGuidance:
             meta.level === 3
               ? 'Shorten vigorous outdoor sports and schedule breaks indoors.'
@@ -577,7 +1010,7 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           riskSummary:
             meta.level === 3
               ? 'Moderate precaution advised for long outdoor workouts.'
-              : 'Unhealthy for prolonged heavy exertion outdoors.',
+              : 'Breathing discomfort likely during prolonged heavy exertion outdoors.',
           outdoorGuidance:
             meta.level === 3
               ? 'Reduce intensity or duration of outdoor running; avoid rush-hour roadways.'
@@ -592,30 +1025,41 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           id: 'older_adults',
           label: 'Older Adults',
           riskSummary: 'Higher risk of particulate-related respiratory and cardiovascular stress.',
-          outdoorGuidance: 'Keep outdoor walks short and strictly during the cleaner midday window, or walk indoors.',
+          outdoorGuidance:
+            'Keep outdoor walks short and strictly during the cleaner midday window, or walk indoors.',
           protectiveSteps: [
             'Avoid outdoor chores like sweeping dust or yard work.',
             'Keep indoor spaces closed and run HEPA filtration in main sitting rooms.',
           ],
-          watchSigns: ['Shortness of breath', 'Unusual tiredness', 'Chest discomfort — seek medical care promptly'],
+          watchSigns: [
+            'Shortness of breath',
+            'Unusual tiredness',
+            'Chest discomfort — seek medical care promptly',
+          ],
         },
         {
           id: 'respiratory',
           label: 'Respiratory Sensitivities',
           riskSummary: 'High likelihood of airway irritation or symptom flare-ups.',
-          outdoorGuidance: 'Avoid prolonged outdoor exertion; keep trips brief and wear a snug particulate respirator (N95/KF94) if tolerated.',
+          outdoorGuidance:
+            'Avoid prolonged outdoor exertion; keep trips brief and wear a snug particulate respirator (N95/KF94) if tolerated.',
           protectiveSteps: [
             'Follow your clinician-prescribed asthma or COPD action plan closely.',
             'Run a True HEPA air purifier in the bedroom and avoid indoor smoke, incense, or aerosol sprays.',
           ],
-          watchSigns: ['Increased reliever inhaler use', 'Wheezing or persistent cough', 'Difficulty speaking in full sentences'],
+          watchSigns: [
+            'Increased reliever inhaler use',
+            'Wheezing or persistent cough',
+            'Difficulty speaking in full sentences',
+          ],
         },
       ],
     };
   }
 
-  // Level 5 or 6 (Very Unhealthy / Hazardous)
+  // Level 5 or 6 (Very Unhealthy/Hazardous or Very Poor/Severe)
   return {
+    scale,
     aqiCategory: meta,
     severeWarning,
     medicalDisclaimer,
@@ -630,31 +1074,44 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           'Coordinate with schools on indoor recess policies and air-cleaning protocols.',
           'Use a properly sized, well-fitting pediatric particulate mask only if outdoor transit is unavoidable.',
         ],
-        watchSigns: ['Persistent coughing', 'Labored or rapid breathing', 'Wheezing — contact a pediatrician'],
+        watchSigns: [
+          'Persistent coughing',
+          'Labored or rapid breathing',
+          'Wheezing — contact a pediatrician',
+        ],
       },
       {
         id: 'adults',
         label: 'Adults',
         riskSummary: 'Significant risk of respiratory irritation and systemic inflammation for all adults.',
-        outdoorGuidance: 'Avoid outdoor exercise entirely. Work remotely or combine essential errands into a single low-exposure trip.',
+        outdoorGuidance:
+          'Avoid outdoor exercise entirely. Work remotely or combine essential errands into a single low-exposure trip.',
         protectiveSteps: [
           'Wear a well-fitting N95, KN95, or KF94 mask (not cloth or loose surgical masks) for any outdoor travel.',
           'Avoid burning candles, incense, or frying without strong exhaust ventilation indoors.',
           'Switch vehicle HVAC to recirculate mode.',
         ],
-        watchSigns: ['Chest tightness', 'Persistent cough', 'Dizziness or severe eye/throat burning'],
+        watchSigns: [
+          'Chest tightness',
+          'Persistent cough',
+          'Dizziness or severe eye/throat burning',
+        ],
       },
       {
         id: 'older_adults',
         label: 'Older Adults',
         riskSummary: 'Very high cardiovascular and respiratory vulnerability during severe winter smog.',
-        outdoorGuidance: 'Stay indoors in a clean-air room; arrange delivery for groceries and errands where possible.',
+        outdoorGuidance:
+          'Stay indoors in a clean-air room; arrange delivery for groceries and errands where possible.',
         protectiveSteps: [
           'Create a designated clean-air room with closed windows and a running HEPA air purifier.',
           'Stay hydrated and keep all regular medications on hand.',
           'Check in daily with family members or caregivers.',
         ],
-        watchSigns: ['Shortness of breath at rest', 'Palpitations or chest pain — seek immediate medical evaluation'],
+        watchSigns: [
+          'Shortness of breath at rest',
+          'Palpitations or chest pain — seek immediate medical evaluation',
+        ],
       },
       {
         id: 'respiratory',
@@ -666,7 +1123,11 @@ export function getFamilyHealthGuidance(aqi: number | null): FamilyHealthAdvisor
           'Run True HEPA filtration continuously on medium/high speed in occupied rooms.',
           'Avoid ozone-generating air cleaners, which can worsen airway inflammation.',
         ],
-        watchSigns: ['Rescue inhaler needed more frequently than usual', 'Worsening wheeze or night waking', 'Seek urgent medical care for breathing distress'],
+        watchSigns: [
+          'Rescue inhaler needed more frequently than usual',
+          'Worsening wheeze or night waking',
+          'Seek urgent medical care for breathing distress',
+        ],
       },
     ],
   };

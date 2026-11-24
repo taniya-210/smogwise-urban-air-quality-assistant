@@ -1,26 +1,31 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AlertCircle, Loader2, ShieldAlert, Sparkles, Stethoscope } from 'lucide-react';
-import { AiGroundingBanner } from '../AiGroundingBanner.tsx';
-import { FallbackNoticeBanner } from '../FallbackNoticeBanner.tsx';
+import { AiStatusStrip, CollapsibleDataGrounding } from '../AiGroundingBanner.tsx';
 import { requestHealthAdvisory } from '../../services/api.ts';
 import {
-  EPA_AQI_SCALE,
   getFamilyHealthGuidance,
+  getScaleAQI,
+  getScaleDisplayLabel,
+  getScaleReferenceTable,
+  getScaleShortLabel,
   type FamilyAdvisoryGroup,
 } from '../../shared/aqi.ts';
 import type {
   AirQualityData,
+  AQIScaleId,
   HealthAdvisoryAiResponse,
   HouseholdProfile,
 } from '../../shared/types.ts';
 
 interface HealthAdvisoryViewProps {
   airQuality: AirQualityData | null;
+  aqiScale: AQIScaleId;
   profile: HouseholdProfile;
 }
 
 function buildContextKey(
   airQuality: AirQualityData | null,
+  aqiScale: AQIScaleId,
   profile: HouseholdProfile,
   focusNote: string
 ): string {
@@ -29,6 +34,7 @@ function buildContextKey(
     mode: airQuality?.mode ?? null,
     aqi: airQuality?.current.usAqi ?? null,
     ts: airQuality?.timestamp ?? null,
+    scale: aqiScale,
     children: profile.hasChildren,
     older: profile.hasOlderAdults,
     resp: profile.hasRespiratorySensitivity,
@@ -36,9 +42,17 @@ function buildContextKey(
   });
 }
 
-export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewProps) {
-  const aqi = airQuality && airQuality.mode !== 'unavailable' ? airQuality.current.usAqi : null;
-  const baseline = getFamilyHealthGuidance(aqi);
+export function HealthAdvisoryView({
+  airQuality,
+  aqiScale,
+  profile,
+}: HealthAdvisoryViewProps) {
+  const scaleAqi = useMemo(() => getScaleAQI(airQuality, aqiScale), [airQuality, aqiScale]);
+  const baseline = useMemo(
+    () => getFamilyHealthGuidance(scaleAqi.value, aqiScale),
+    [scaleAqi.value, aqiScale]
+  );
+  const referenceScale = useMemo(() => getScaleReferenceTable(aqiScale), [aqiScale]);
 
   const [selectedGroupId, setSelectedGroupId] = useState<FamilyAdvisoryGroup['id']>('children');
   const [focusNote, setFocusNote] = useState('');
@@ -46,18 +60,28 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
   const [generatedContextKey, setGeneratedContextKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
-  const currentContextKey = buildContextKey(airQuality, profile, focusNote);
-  const contextChanged = Boolean(aiAdvisory && generatedContextKey && generatedContextKey !== currentContextKey);
+  const currentContextKey = buildContextKey(airQuality, aqiScale, profile, focusNote);
+  const contextChanged = Boolean(
+    aiAdvisory && generatedContextKey && generatedContextKey !== currentContextKey
+  );
 
-  const displayGroups = aiAdvisory ? aiAdvisory.groups : baseline.groups;
-  const displaySevereWarning = aiAdvisory ? aiAdvisory.severeWarning : baseline.severeWarning;
-  const displayDisclaimer = aiAdvisory ? aiAdvisory.medicalDisclaimer : baseline.medicalDisclaimer;
+  const displayGroups = aiAdvisory && !contextChanged ? aiAdvisory.groups : baseline.groups;
+  const displaySevereWarning =
+    aiAdvisory && !contextChanged ? aiAdvisory.severeWarning : baseline.severeWarning;
+  const displayDisclaimer =
+    aiAdvisory && !contextChanged ? aiAdvisory.medicalDisclaimer : baseline.medicalDisclaimer;
 
   const activeGroup =
     displayGroups.find((g) => g.id === selectedGroupId) ?? displayGroups[0];
 
-  async function runGeneration() {
+  const scaleLabel = getScaleDisplayLabel(aqiScale);
+  const scaleShort = getScaleShortLabel(aqiScale);
+
+  async function runGeneration(forceRefresh = false) {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     const keyAtRequest = currentContextKey;
@@ -66,6 +90,8 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
         airQuality,
         profile,
         focusNote: focusNote.trim() || undefined,
+        aqiScale,
+        forceRefresh,
       });
       setAiAdvisory(result);
       setGeneratedContextKey(keyAtRequest);
@@ -76,13 +102,14 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
           : 'Unable to generate AI family health advisory right now.'
       );
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
 
   function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
-    void runGeneration();
+    void runGeneration(false);
   }
 
   function handleTabKeyDown(e: React.KeyboardEvent, idx: number) {
@@ -94,11 +121,11 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="space-y-1">
         <h2 className="text-2xl font-bold text-slate-900">AI Family Health Advisory</h2>
         <p className="text-sm text-slate-600 max-w-3xl">
-          General public-health precautionary guidance calibrated to the US EPA AQI scale (0–500; distinct from India’s CPCB NAQI scale) and tailored by Google Gemini to your household and active air-quality profile.
+          General public-health precautionary guidance calibrated to {scaleLabel} and tailored by Google Gemini to your household and active air-quality profile.
         </p>
       </div>
 
@@ -170,26 +197,22 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
         </div>
       )}
 
+      {/* Compact AI Status Strip */}
       {!loading && aiAdvisory && (
-        <div className="space-y-4">
-          {aiAdvisory.generatedBy === 'fallback' && (
-            <FallbackNoticeBanner
-              reason={aiAdvisory.fallbackReason}
-              category={aiAdvisory.errorCategory}
-              onRetry={() => void runGeneration()}
-              retrying={loading}
-            />
-          )}
-
-          <AiGroundingBanner
-            generatedBy={aiAdvisory.generatedBy}
-            dataSourcesUsed={aiAdvisory.dataSourcesUsed}
-            contextChanged={contextChanged}
-            contextChangedLabel={`Active location (${airQuality?.location.name || 'None'}), AQI, or household context changed since this advisory was generated.`}
-            onRegenerate={() => void runGeneration()}
-            regenerating={loading}
-          />
-        </div>
+        <AiStatusStrip
+          generatedBy={aiAdvisory.generatedBy}
+          fromCache={aiAdvisory.fromCache}
+          cachedAt={aiAdvisory.cachedAt}
+          modelUsed={aiAdvisory.modelUsed}
+          fallbackReason={aiAdvisory.fallbackReason}
+          errorCategory={aiAdvisory.errorCategory}
+          diagnosticDetail={aiAdvisory.diagnosticDetail}
+          contextChanged={contextChanged}
+          contextChangedLabel={`Active location (${airQuality?.location.name || 'None'}), AQI scale, or household context changed since this advisory was generated.`}
+          onRegenerate={() => void runGeneration(false)}
+          onRetryGemini={() => void runGeneration(true)}
+          regenerating={loading}
+        />
       )}
 
       {/* Severe Pollution Warning Banner */}
@@ -214,16 +237,16 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200">
             <div className="space-y-1">
               <div className="text-xs text-slate-500">
-                {aiAdvisory
+                {aiAdvisory && !contextChanged
                   ? aiAdvisory.generatedBy === 'gemini'
-                    ? 'AI-Tailored Precautionary Guidance (US EPA AQI Scale)'
-                    : 'Template Precautionary Guidance (US EPA AQI Scale)'
-                  : 'Baseline US EPA AQI Reference Guidance'}{' '}
+                    ? `AI-Tailored Precautionary Guidance (${scaleLabel})`
+                    : `Smart Rule Engine Guidance (${scaleLabel})`
+                  : `Baseline ${scaleLabel} Reference Guidance`}{' '}
                 · {airQuality?.location.name || 'No location selected'}
               </div>
               <div className="flex flex-wrap items-baseline gap-3">
                 <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-                  {aqi !== null ? `US EPA AQI ${aqi}` : 'Reading Unavailable'}
+                  {scaleAqi.value !== null ? `${scaleShort} ${scaleAqi.value}` : 'Reading Unavailable'}
                 </span>
                 <span className={`text-sm font-bold ${baseline.aqiCategory.textClass}`}>
                   {baseline.aqiCategory.name}
@@ -232,7 +255,7 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
                   ({baseline.aqiCategory.epaRange})
                 </span>
               </div>
-              {aiAdvisory?.summary && (
+              {aiAdvisory && !contextChanged && aiAdvisory.summary && (
                 <p className="text-sm text-slate-700 pt-1 leading-relaxed max-w-2xl">
                   {aiAdvisory.summary}
                 </p>
@@ -319,11 +342,13 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
         </section>
       )}
 
-      {/* Complete EPA Reference Table */}
+      {/* Complete Active Scale Reference Table */}
       <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200">
           <h3 className="text-base font-bold text-slate-900">
-            US EPA Air Quality Index Reference Scale
+            {aqiScale === 'india_cpcb'
+              ? 'India CPCB National Air Quality Index (NAQI) Reference Scale'
+              : 'US EPA Air Quality Index Reference Scale'}
           </h3>
         </div>
         <div className="overflow-x-auto">
@@ -331,12 +356,14 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
                 <th className="py-3 px-6">Category</th>
-                <th className="py-3 px-4">US AQI Range</th>
+                <th className="py-3 px-4">
+                  {aqiScale === 'india_cpcb' ? 'CPCB NAQI Range' : 'US AQI Range'}
+                </th>
                 <th className="py-3 px-6">Public-Health Meaning</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
-              {EPA_AQI_SCALE.map((tier) => {
+              {referenceScale.map((tier) => {
                 const isCurrent = tier.name === baseline.aqiCategory.name;
                 return (
                   <tr
@@ -367,6 +394,20 @@ export function HealthAdvisoryView({ airQuality, profile }: HealthAdvisoryViewPr
           </table>
         </div>
       </section>
+
+      {/* Collapsible Data Grounding (Collapsed by Default, Below Actionable Guidance) */}
+      {!loading && aiAdvisory && (
+        <CollapsibleDataGrounding
+          generatedBy={aiAdvisory.generatedBy}
+          fromCache={aiAdvisory.fromCache}
+          cachedAt={aiAdvisory.cachedAt}
+          modelUsed={aiAdvisory.modelUsed}
+          airQuality={airQuality}
+          aqiScale={aiAdvisory.aqiScale ?? aqiScale}
+          dataSourcesUsed={aiAdvisory.dataSourcesUsed}
+          disclaimer={aiAdvisory.medicalDisclaimer}
+        />
+      )}
 
       {/* Explicit Non-Diagnostic Medical Disclaimer */}
       <div className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-600 leading-relaxed">

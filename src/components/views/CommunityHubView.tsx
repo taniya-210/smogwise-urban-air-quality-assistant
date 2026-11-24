@@ -1,16 +1,17 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AlertCircle, Check, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
-import { AiGroundingBanner } from '../AiGroundingBanner.tsx';
-import { FallbackNoticeBanner } from '../FallbackNoticeBanner.tsx';
+import { AiStatusStrip, CollapsibleDataGrounding } from '../AiGroundingBanner.tsx';
 import { requestCommunityPlan } from '../../services/api.ts';
 import type {
   AirQualityData,
+  AQIScaleId,
   CommunityPlanResponse,
   CommunitySetting,
 } from '../../shared/types.ts';
 
 interface CommunityHubViewProps {
   airQuality: AirQualityData | null;
+  aqiScale: AQIScaleId;
 }
 
 const SETTING_OPTIONS: Array<{
@@ -44,7 +45,7 @@ const SETTING_OPTIONS: Array<{
   },
 ];
 
-export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
+export function CommunityHubView({ airQuality, aqiScale }: CommunityHubViewProps) {
   const [setting, setSetting] = useState<CommunitySetting>('school');
   const [groupSize, setGroupSize] = useState<'under_50' | '50_to_250' | '250_to_1000' | 'over_1000'>(
     '250_to_1000'
@@ -60,11 +61,13 @@ export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const inFlightRef = useRef(false);
 
   const currentContextKey = JSON.stringify({
     loc: airQuality?.location.name ?? null,
     mode: airQuality?.mode ?? null,
     aqi: airQuality?.current.usAqi ?? null,
+    scale: aqiScale,
     setting,
     groupSize,
     challenge: primaryChallenge.trim(),
@@ -82,12 +85,14 @@ export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
     }
   }
 
-  async function runGeneration() {
+  async function runGeneration(forceRefresh = false) {
+    if (inFlightRef.current) return;
     if (primaryChallenge.trim().length < 3) {
       setError('Please describe the main local air-quality challenge (at least 3 characters).');
       return;
     }
 
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     setCopied(false);
@@ -99,19 +104,22 @@ export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
         primaryChallenge: primaryChallenge.trim(),
         resourcesAvailable: resourcesAvailable.trim(),
         airQuality,
+        aqiScale,
+        forceRefresh,
       });
       setPlan(result);
       setGeneratedContextKey(keyAtRequest);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to generate community action plan.');
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
 
   function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
-    void runGeneration();
+    void runGeneration(false);
   }
 
   async function handleCopyPlan() {
@@ -291,21 +299,18 @@ export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
 
           {plan && !loading && (
             <div className="space-y-6">
-              {plan.generatedBy === 'fallback' && (
-                <FallbackNoticeBanner
-                  reason={plan.fallbackReason}
-                  category={plan.errorCategory}
-                  onRetry={() => void runGeneration()}
-                  retrying={loading}
-                />
-              )}
-
-              <AiGroundingBanner
+              <AiStatusStrip
                 generatedBy={plan.generatedBy}
-                dataSourcesUsed={plan.dataSourcesUsed}
+                fromCache={plan.fromCache}
+                cachedAt={plan.cachedAt}
+                modelUsed={plan.modelUsed}
+                fallbackReason={plan.fallbackReason}
+                errorCategory={plan.errorCategory}
+                diagnosticDetail={plan.diagnosticDetail}
                 contextChanged={contextChanged}
-                contextChangedLabel={`Your active city (${airQuality?.location.name || 'none'}), setting, or challenge details changed since this plan was generated.`}
-                onRegenerate={() => void runGeneration()}
+                contextChangedLabel={`Your active city (${airQuality?.location.name || 'none'}), AQI scale, setting, or challenge details changed since this plan was generated.`}
+                onRegenerate={() => void runGeneration(false)}
+                onRetryGemini={() => void runGeneration(true)}
                 regenerating={loading}
               />
 
@@ -437,11 +442,18 @@ export function CommunityHubView({ airQuality }: CommunityHubViewProps) {
                     ))}
                   </ul>
                 </div>
-
-                <p className="text-xs text-slate-500 pt-2 border-t border-slate-200">
-                  {plan.disclaimer}
-                </p>
               </section>
+
+              <CollapsibleDataGrounding
+                generatedBy={plan.generatedBy}
+                fromCache={plan.fromCache}
+                cachedAt={plan.cachedAt}
+                modelUsed={plan.modelUsed}
+                airQuality={airQuality}
+                aqiScale={plan.aqiScale ?? aqiScale}
+                dataSourcesUsed={plan.dataSourcesUsed}
+                disclaimer={plan.disclaimer}
+              />
             </div>
           )}
         </div>

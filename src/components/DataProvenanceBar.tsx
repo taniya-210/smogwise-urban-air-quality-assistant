@@ -1,9 +1,10 @@
 import { AlertTriangle, Clock, Info, RefreshCw } from 'lucide-react';
-import { getDataFreshness } from '../shared/aqi.ts';
-import type { AirQualityData } from '../shared/types.ts';
+import { getDataFreshness, getScaleDisplayLabel } from '../shared/aqi.ts';
+import type { AirQualityData, AQIScaleId } from '../shared/types.ts';
 
 interface DataProvenanceBarProps {
   airQuality: AirQualityData | null;
+  aqiScale: AQIScaleId;
   loading: boolean;
   onRefresh: () => void;
   onOpenLocationPicker: () => void;
@@ -23,6 +24,7 @@ function formatReadableTimestamp(iso: string | null): string {
 
 export function DataProvenanceBar({
   airQuality,
+  aqiScale,
   loading,
   onRefresh,
   onOpenLocationPicker,
@@ -44,21 +46,26 @@ export function DataProvenanceBar({
           ? 'Live Modelled Estimate (Not Official Station)'
           : 'Live Ground Station Reading';
 
-  const aqiScaleLabel = airQuality.source.aqiScale || 'US EPA AQI (0–500)';
+  const activeScaleLabel = getScaleDisplayLabel(aqiScale);
+  const scaleSuffix =
+    aqiScale === 'india_cpcb'
+      ? 'derived from pollutants · not official CPCB CAAQMS'
+      : 'distinct from India CPCB NAQI';
 
   return (
     <div className="space-y-3">
       {airQuality.mode === 'demo' && (
         <div
           role="status"
-          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-950 text-sm"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-950 text-xs sm:text-sm"
         >
           <div className="flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-700" aria-hidden="true" />
             <div>
               <span className="font-semibold">Demo Mode Active (Illustrative — Not Live Data):</span>{' '}
-              Viewing a sample scenario for {airQuality.location.name} on the {aqiScaleLabel} scale.
-              These values are not live atmospheric measurements or official government station readings.
+              Viewing sample pollutant data for {airQuality.location.name} evaluated on the{' '}
+              {activeScaleLabel} scale. These values are not live atmospheric measurements or official
+              government station readings.
             </div>
           </div>
           <button
@@ -124,7 +131,9 @@ export function DataProvenanceBar({
               <span aria-hidden="true" className="text-slate-300">
                 ·
               </span>
-              <span>Scale: {aqiScaleLabel} (not India CPCB)</span>
+              <span title={scaleSuffix}>
+                Scale: <span className="font-medium text-slate-800">{activeScaleLabel}</span>
+              </span>
             </>
           )}
           <span aria-hidden="true" className="text-slate-300">
@@ -153,7 +162,10 @@ export function DataProvenanceBar({
               disabled={loading}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 disabled:opacity-50 transition-colors whitespace-nowrap py-1 px-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
               Refresh
             </button>
           )}

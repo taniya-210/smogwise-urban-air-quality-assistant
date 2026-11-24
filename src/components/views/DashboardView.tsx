@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
   Clock,
+  Droplets,
   FlaskConical,
+  Info,
   MapPin,
   RefreshCw,
   ShieldAlert,
+  Thermometer,
+  Wind,
 } from 'lucide-react';
 import {
   Area,
@@ -19,16 +23,20 @@ import {
 } from 'recharts';
 import {
   buildPollutantDetails,
-  EPA_AQI_SCALE,
   findSaferOutdoorWindows,
   formatHourLabel,
-  getAQICategory,
   getDominantPollutant,
+  getHourlyAqiForScale,
+  getScaleAQI,
+  getScaleDisplayLabel,
+  getScaleReferenceTable,
+  getScaleShortLabel,
 } from '../../shared/aqi.ts';
-import type { AirQualityData } from '../../shared/types.ts';
+import type { AirQualityData, AQIScaleId } from '../../shared/types.ts';
 
 interface DashboardViewProps {
   airQuality: AirQualityData | null;
+  aqiScale: AQIScaleId;
   loading: boolean;
   onRefresh: () => void;
   onOpenLocationPicker: () => void;
@@ -36,17 +44,70 @@ interface DashboardViewProps {
   onNavigate: (tab: string) => void;
 }
 
-type ChartMetric = 'usAqi' | 'pm25' | 'no2';
+type ChartMetric = 'activeAqi' | 'pm25' | 'no2';
 
 export function DashboardView({
   airQuality,
+  aqiScale,
   loading,
   onRefresh,
   onOpenLocationPicker,
   onSelectDemoScenario,
   onNavigate,
 }: DashboardViewProps) {
-  const [chartMetric, setChartMetric] = useState<ChartMetric>('usAqi');
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('activeAqi');
+
+  const scaleAqi = useMemo(
+    () => getScaleAQI(airQuality, aqiScale),
+    [airQuality, aqiScale]
+  );
+
+  const dominant = useMemo(
+    () =>
+      airQuality && airQuality.mode !== 'unavailable'
+        ? getDominantPollutant(airQuality.current)
+        : null,
+    [airQuality]
+  );
+
+  const saferWindow = useMemo(
+    () =>
+      airQuality && airQuality.mode !== 'unavailable'
+        ? findSaferOutdoorWindows(airQuality.hourly, aqiScale)
+        : {
+            available: false,
+            startLabel: null,
+            endLabel: null,
+            averageAqi: null,
+            peakHourLabel: null,
+            peakAqi: null,
+            explanation: 'Hourly air quality data is unavailable.',
+          },
+    [airQuality, aqiScale]
+  );
+
+  const pollutants = useMemo(
+    () =>
+      airQuality && airQuality.mode !== 'unavailable'
+        ? buildPollutantDetails(airQuality.current)
+        : [],
+    [airQuality]
+  );
+
+  const chartData = useMemo(
+    () =>
+      airQuality && airQuality.mode !== 'unavailable'
+        ? airQuality.hourly.map((pt) => ({
+            label: formatHourLabel(pt.time),
+            activeAqi: getHourlyAqiForScale(pt, aqiScale),
+            pm25: pt.pm25,
+            no2: pt.no2,
+          }))
+        : [],
+    [airQuality, aqiScale]
+  );
+
+  const scaleTiers = useMemo(() => getScaleReferenceTable(aqiScale), [aqiScale]);
 
   if (loading && !airQuality) {
     return (
@@ -70,7 +131,7 @@ export function DashboardView({
       <div className="space-y-6">
         <div className="p-8 rounded-xl border border-slate-200 bg-slate-50/70 max-w-3xl">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
             <div className="space-y-3">
               <h2 className="text-xl font-bold text-slate-900">
                 Live Air Quality Data Unavailable
@@ -83,25 +144,25 @@ export function DashboardView({
                 <button
                   type="button"
                   onClick={onRefresh}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                 >
-                  <RefreshCw className="w-4 h-4" />
+                  <RefreshCw className="w-4 h-4" aria-hidden="true" />
                   Retry Live Fetch
                 </button>
                 <button
                   type="button"
                   onClick={onOpenLocationPicker}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                 >
-                  <MapPin className="w-4 h-4" />
+                  <MapPin className="w-4 h-4" aria-hidden="true" />
                   Try Another City
                 </button>
                 <button
                   type="button"
                   onClick={() => onSelectDemoScenario('delhi-winter-smog')}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-950 bg-amber-50 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-950 bg-amber-50 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                 >
-                  <FlaskConical className="w-4 h-4" />
+                  <FlaskConical className="w-4 h-4" aria-hidden="true" />
                   Load Demo Scenario (Illustrative)
                 </button>
               </div>
@@ -112,18 +173,10 @@ export function DashboardView({
     );
   }
 
-  const aqi = airQuality.current.usAqi;
-  const cat = getAQICategory(aqi);
-  const dominant = getDominantPollutant(airQuality.current);
-  const saferWindow = findSaferOutdoorWindows(airQuality.hourly);
-  const pollutants = buildPollutantDetails(airQuality.current);
-
-  const chartData = airQuality.hourly.map((pt) => ({
-    label: formatHourLabel(pt.time),
-    usAqi: pt.usAqi,
-    pm25: pt.pm25,
-    no2: pt.no2,
-  }));
+  const aqi = scaleAqi.value;
+  const cat = scaleAqi.category;
+  const scaleLabel = getScaleDisplayLabel(aqiScale);
+  const scaleShort = getScaleShortLabel(aqiScale);
 
   const hasChartData = chartData.some((d) => d[chartMetric] !== null);
 
@@ -131,17 +184,28 @@ export function DashboardView({
     ChartMetric,
     { label: string; unit: string; color: string }
   > = {
-    usAqi: { label: 'US AQI', unit: 'AQI', color: '#1d4ed8' },
+    activeAqi: {
+      label: aqiScale === 'india_cpcb' ? 'CPCB NAQI' : 'US AQI',
+      unit: aqiScale === 'india_cpcb' ? 'NAQI' : 'AQI',
+      color: '#1d4ed8',
+    },
     pm25: { label: 'PM2.5', unit: 'µg/m³', color: '#15803d' },
     no2: { label: 'NO₂', unit: 'µg/m³', color: '#0f1d38' },
   };
 
-  const aqiPercent = aqi !== null ? Math.min(100, Math.round((aqi / 350) * 100)) : 0;
+  const meterMax = aqiScale === 'india_cpcb' ? 450 : 350;
+  const aqiPercent = aqi !== null ? Math.min(100, Math.round((aqi / meterMax) * 100)) : 0;
+
+  const hasWeather =
+    airQuality.weather &&
+    (airQuality.weather.temperatureC !== null ||
+      airQuality.weather.relativeHumidityPct !== null ||
+      airQuality.weather.windSpeedKmh !== null);
 
   return (
-    <div className="space-y-8">
-      {/* Severe Smog Alert Banner when AQI >= 201 */}
-      {cat.isSevere && (
+    <div className="space-y-6">
+      {/* Severe Smog Alert Banner */}
+      {cat.isSevere && aqi !== null && (
         <div
           role="alert"
           className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border ${cat.surfaceClass} ${cat.borderClass} ${cat.textClass}`}
@@ -150,7 +214,7 @@ export function DashboardView({
             <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
             <div>
               <p className="text-sm font-bold">
-                {cat.name} Air Quality Alert (US AQI {aqi})
+                {cat.name} Air Quality Alert ({scaleShort} {aqi})
               </p>
               <p className="text-sm mt-0.5 opacity-90">{cat.shortGuidance}</p>
             </div>
@@ -158,10 +222,10 @@ export function DashboardView({
           <button
             type="button"
             onClick={() => onNavigate('health')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-white text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 self-start sm:self-center"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-white text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 self-start sm:self-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
             View Family Health Advisory
-            <ArrowRight className="w-3.5 h-3.5" />
+            <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -172,7 +236,7 @@ export function DashboardView({
           <div className="lg:col-span-5 flex flex-col justify-between space-y-5">
             <div>
               <p className="text-xs font-medium text-slate-500">
-                US EPA Air Quality Index (0–500 · Not India CPCB AQI) · {airQuality.location.name}
+                {scaleLabel} · {airQuality.location.name}
               </p>
               <div className="flex items-baseline gap-4 mt-2">
                 <span className="text-6xl font-extrabold tracking-tight font-mono tabular-nums text-slate-900">
@@ -181,46 +245,83 @@ export function DashboardView({
                 <div>
                   <div className={`text-lg font-bold ${cat.textClass}`}>{cat.name}</div>
                   <div className="text-xs font-mono tabular-nums text-slate-500">
-                    US EPA Scale: {cat.epaRange}
+                    {aqiScale === 'india_cpcb' ? 'India CPCB Range' : 'US EPA Range'}: {cat.epaRange}
                   </div>
                 </div>
               </div>
               <p className="text-sm text-slate-600 mt-3 leading-relaxed">
                 {cat.shortGuidance}
               </p>
+
+              {scaleAqi.limitationNote && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
+                  <Info className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{scaleAqi.limitationNote}</span>
+                </div>
+              )}
             </div>
 
-            {/* Accessible Linear EPA Scale Meter */}
+            {/* Accessible Linear Scale Meter */}
             <div className="space-y-1.5">
-              <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div
+                role="meter"
+                aria-label={`${scaleLabel} severity meter`}
+                aria-valuemin={0}
+                aria-valuemax={meterMax}
+                aria-valuenow={aqi ?? 0}
+                aria-valuetext={aqi !== null ? `${scaleShort} ${aqi} — ${cat.name}` : 'Reading unavailable'}
+                className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden"
+              >
                 <div
                   className="h-full rounded-full transition-all duration-300"
                   style={{ width: `${aqiPercent}%`, backgroundColor: cat.barHex }}
                 />
               </div>
-              <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-500">
-                <span>0 Good</span>
-                <span>100 Mod</span>
-                <span>200 Unhealthy</span>
-                <span>301+ Haz</span>
-              </div>
+              {aqiScale === 'india_cpcb' ? (
+                <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-500">
+                  <span>0 Good</span>
+                  <span>100 Sat</span>
+                  <span>200 Mod</span>
+                  <span>300 Poor</span>
+                  <span>401+ Sev</span>
+                </div>
+              ) : (
+                <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-500">
+                  <span>0 Good</span>
+                  <span>100 Mod</span>
+                  <span>200 Unhealthy</span>
+                  <span>301+ Haz</span>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="lg:col-span-7 lg:border-l lg:border-slate-200 lg:pl-6 flex flex-col justify-between space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pb-5 border-b border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pb-4 border-b border-slate-100">
               <div>
-                <div className="text-xs text-slate-500">Dominant Pollutant</div>
+                <div className="text-xs text-slate-500">
+                  {aqiScale === 'india_cpcb' && scaleAqi.dominantSubIndexPollutant
+                    ? 'Sub-Index Driver'
+                    : 'Dominant Pollutant'}
+                </div>
                 <div className="text-base font-semibold text-slate-900 font-mono tabular-nums mt-1">
-                  {dominant ?? 'Unavailable'}
+                  {(aqiScale === 'india_cpcb' ? scaleAqi.dominantSubIndexPollutant : null) ??
+                    dominant ??
+                    'Unavailable'}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500">European AQI</div>
+                <div className="text-xs text-slate-500">
+                  {aqiScale === 'india_cpcb' ? 'US EPA AQI (Ref.)' : 'European AQI'}
+                </div>
                 <div className="text-base font-semibold text-slate-900 font-mono tabular-nums mt-1">
-                  {airQuality.current.europeanAqi !== null
-                    ? airQuality.current.europeanAqi
-                    : 'Unavailable'}
+                  {aqiScale === 'india_cpcb'
+                    ? airQuality.current.usAqi !== null
+                      ? airQuality.current.usAqi
+                      : 'Unavailable'
+                    : airQuality.current.europeanAqi !== null
+                      ? airQuality.current.europeanAqi
+                      : 'Unavailable'}
                 </div>
               </div>
               <div>
@@ -233,9 +334,36 @@ export function DashboardView({
               </div>
             </div>
 
-            <div className="space-y-2">
+            {hasWeather && airQuality.weather && (
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pb-4 border-b border-slate-100 text-xs text-slate-600">
+                <span className="font-semibold text-slate-700">Live Weather</span>
+                {airQuality.weather.temperatureC !== null && (
+                  <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-800">
+                    <Thermometer className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                    {airQuality.weather.temperatureC}°C
+                  </span>
+                )}
+                {airQuality.weather.relativeHumidityPct !== null && (
+                  <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-800">
+                    <Droplets className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                    {airQuality.weather.relativeHumidityPct}% RH
+                  </span>
+                )}
+                {airQuality.weather.windSpeedKmh !== null && (
+                  <span className="inline-flex items-center gap-1 font-mono tabular-nums text-slate-800">
+                    <Wind className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                    {airQuality.weather.windSpeedKmh} km/h
+                  </span>
+                )}
+                <span className="text-[11px] text-slate-400 ml-auto">
+                  {airQuality.weather.sourceName}
+                </span>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
-                <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                <Clock className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
                 <span>Diurnal Window Analysis</span>
               </div>
               <p className="text-sm text-slate-600 leading-relaxed">
@@ -247,22 +375,22 @@ export function DashboardView({
               <button
                 type="button"
                 onClick={() => onNavigate('routine')}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
               >
                 Plan Today’s Low-Exposure Routine
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4" aria-hidden="true" />
               </button>
               <button
                 type="button"
                 onClick={() => onNavigate('indoor')}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
               >
                 Indoor Air Checklist
               </button>
               <button
                 type="button"
                 onClick={() => onNavigate('assistant')}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-emerald-800 bg-emerald-50/70 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-emerald-800 bg-emerald-50/70 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
               >
                 Ask SmogWise AI
               </button>
@@ -271,7 +399,7 @@ export function DashboardView({
         </div>
       </section>
 
-      {/* Interactive 24-Hour Trend Chart + EPA Reference Quick Guide */}
+      {/* Interactive 24-Hour Trend Chart + Active Scale Severity Tiers */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-white p-6 flex flex-col">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
@@ -280,17 +408,16 @@ export function DashboardView({
                 24-Hour Air Quality Trend
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Hourly profile for {airQuality.location.name} ({airQuality.location.timezone})
+                Hourly profile for {airQuality.location.name} ({airQuality.location.timezone}) · {scaleLabel}
               </p>
             </div>
 
-            {/* Interactive Segmented Control */}
             <div
               role="group"
               aria-label="Chart metric selector"
               className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start"
             >
-              {(['usAqi', 'pm25', 'no2'] as ChartMetric[]).map((m) => (
+              {(['activeAqi', 'pm25', 'no2'] as ChartMetric[]).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -357,20 +484,22 @@ export function DashboardView({
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center rounded-lg bg-slate-50 border border-dashed border-slate-200 p-8 text-sm text-slate-500">
-              Hourly {metricConfig[chartMetric].label} readings are not available from the active data source.
+            <div className="flex-1 flex items-center justify-center rounded-lg bg-slate-50 border border-dashed border-slate-200 p-8 text-sm text-slate-500 text-center">
+              Hourly {metricConfig[chartMetric].label} values cannot be computed from the active data source’s available hourly pollutants.
             </div>
           )}
         </div>
 
         <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-6 flex flex-col justify-between">
           <div>
-            <h3 className="text-base font-bold text-slate-900">US EPA Severity Tiers</h3>
+            <h3 className="text-base font-bold text-slate-900">
+              {aqiScale === 'india_cpcb' ? 'India CPCB NAQI Tiers' : 'US EPA Severity Tiers'}
+            </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Color indicators always paired with explicit range and category
+              Color indicators paired with explicit numeric range and category
             </p>
             <div className="mt-4 divide-y divide-slate-100">
-              {EPA_AQI_SCALE.map((tier) => {
+              {scaleTiers.map((tier) => {
                 const isActive = tier.name === cat.name;
                 return (
                   <div
@@ -396,7 +525,7 @@ export function DashboardView({
             </div>
           </div>
 
-          <p className="text-[11px] text-slate-500 pt-4 border-t border-slate-100">
+          <p className="text-[11px] text-slate-500 pt-4 border-t border-slate-100 leading-relaxed">
             {airQuality.source.note}
           </p>
         </div>

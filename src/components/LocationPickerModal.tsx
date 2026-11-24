@@ -139,9 +139,9 @@ export function LocationPickerModal({
             type="button"
             onClick={onClose}
             aria-label="Close location selector"
-            className="p-2 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            className="p-2 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -152,9 +152,9 @@ export function LocationPickerModal({
             <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <label htmlFor="city-search-input" className="sr-only">
-                  Search city name
+                  Search city name for live air quality
                 </label>
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
                 <input
                   ref={searchInputRef}
                   id="city-search-input"
@@ -162,8 +162,11 @@ export function LocationPickerModal({
                   maxLength={100}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Search city name for live air quality"
+                  aria-invalid={Boolean(searchError)}
+                  aria-describedby={searchError ? 'city-search-error' : undefined}
                   placeholder="Enter city name (e.g., Delhi, Warsaw, Mexico City, Seattle)..."
-                  className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
                 />
               </div>
               <button
@@ -176,13 +179,20 @@ export function LocationPickerModal({
             </form>
 
             {searchError && (
-              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              <p
+                id="city-search-error"
+                role="alert"
+                className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2"
+              >
                 {searchError}
               </p>
             )}
 
             {results.length > 0 && (
-              <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+              <div
+                aria-live="polite"
+                className="border border-slate-200 rounded-lg divide-y divide-slate-100"
+              >
                 {results.map((loc) => (
                   <button
                     key={`${loc.name}-${loc.latitude}-${loc.longitude}`}
@@ -191,18 +201,18 @@ export function LocationPickerModal({
                       onSelectLiveLocation(loc);
                       onClose();
                     }}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors"
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <MapPin className="w-4 h-4 text-blue-700 shrink-0" />
+                      <MapPin className="w-4 h-4 text-blue-700 shrink-0" aria-hidden="true" />
                       <div className="truncate">
                         <span className="text-sm font-medium text-slate-900">{loc.name}</span>
-                        <span className="text-xs text-slate-500 ml-1.5">
+                        <span className="text-xs text-slate-600 ml-1.5">
                           {[loc.admin1, loc.country].filter(Boolean).join(', ')}
                         </span>
                       </div>
                     </div>
-                    <span className="text-xs font-mono tabular-nums text-slate-400 shrink-0 ml-3">
+                    <span className="text-xs font-mono tabular-nums text-slate-600 shrink-0 ml-3">
                       {loc.latitude.toFixed(2)}, {loc.longitude.toFixed(2)}
                     </span>
                   </button>
@@ -211,7 +221,7 @@ export function LocationPickerModal({
             )}
 
             {hasSearched && !searching && !searchError && results.length === 0 && (
-              <p className="text-xs text-slate-500">
+              <p role="status" aria-live="polite" className="text-xs text-slate-600">
                 No matching cities found for “{query}”. Try a nearby major city name.
               </p>
             )}
@@ -229,10 +239,10 @@ export function LocationPickerModal({
                     onSelectLiveLocation(city);
                     onClose();
                   }}
-                  className="px-3 py-2.5 text-left rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 transition-colors"
+                  className="px-3 py-2.5 text-left rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                 >
                   <div className="text-sm font-medium text-slate-900 truncate">{city.name}</div>
-                  <div className="text-xs text-slate-500 truncate">{city.country}</div>
+                  <div className="text-xs text-slate-600 truncate">{city.country}</div>
                 </button>
               ))}
             </div>
@@ -241,7 +251,7 @@ export function LocationPickerModal({
           {/* Clearly Labeled Demo Scenarios */}
           <section className="space-y-3 pt-4 border-t border-slate-200">
             <div className="flex items-center gap-2">
-              <FlaskConical className="w-4 h-4 text-amber-700" />
+              <FlaskConical className="w-4 h-4 text-amber-700" aria-hidden="true" />
               <h3 className="text-sm font-semibold text-slate-900">
                 Demo Mode Scenarios (Illustrative — Not Live Data)
               </h3>
@@ -260,18 +270,18 @@ export function LocationPickerModal({
                       onSelectDemoScenario(sc.id);
                       onClose();
                     }}
-                    className="p-3 text-left rounded-lg border border-amber-200 bg-amber-50/40 hover:bg-amber-50 transition-colors"
+                    className="p-3 text-left rounded-lg border border-amber-200 bg-amber-50/40 hover:bg-amber-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                   >
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-sm font-semibold text-slate-900">{sc.label}</span>
                       <span className={`text-xs font-mono tabular-nums font-semibold ${cat.textClass}`}>
-                        AQI {sc.usAqi}
+                        US AQI {sc.usAqi} · {cat.name}
                       </span>
                     </div>
-                    <div className="text-xs text-slate-600 mt-1">
-                      {sc.city}, {sc.country} · {cat.name}
+                    <div className="text-xs text-slate-700 mt-1">
+                      {sc.city}, {sc.country}
                     </div>
-                    <div className="text-xs text-slate-500 mt-0.5">{sc.summary}</div>
+                    <div className="text-xs text-slate-600 mt-0.5">{sc.summary}</div>
                   </button>
                 );
               })}

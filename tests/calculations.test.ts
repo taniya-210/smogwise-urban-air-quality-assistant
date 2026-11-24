@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPollutantDetails,
+  calculateIndiaCpcbAqi,
+  calculateIndiaCpcbSubIndex,
   calculatePm25SubIndex,
   findSaferOutdoorWindows,
   getAQICategory,
   getDataFreshness,
   getDominantPollutant,
   getFamilyHealthGuidance,
+  getScaleAQI,
+  getScaleReferenceTable,
+  isLocationInIndia,
 } from '../src/shared/aqi.ts';
 import { calculateCommuteImpact } from '../src/shared/emissions.ts';
 import { DEMO_SCENARIOS_LIST, getDemoScenario } from '../src/shared/demoScenarios.ts';
@@ -168,6 +173,164 @@ describe('US EPA AQI Categorization & Calculations', () => {
   });
 });
 
+describe('India CPCB NAQI & Dual-Scale Switching Engine', () => {
+  it('classifies all six official India CPCB NAQI categories accurately', () => {
+    expect(getAQICategory(35, 'india_cpcb').name).toBe('Good');
+    expect(getAQICategory(80, 'india_cpcb').name).toBe('Satisfactory');
+    expect(getAQICategory(150, 'india_cpcb').name).toBe('Moderately Polluted');
+    expect(getAQICategory(260, 'india_cpcb').name).toBe('Poor');
+    expect(getAQICategory(340, 'india_cpcb').name).toBe('Very Poor');
+    expect(getAQICategory(340, 'india_cpcb').isSevere).toBe(true);
+    expect(getAQICategory(430, 'india_cpcb').name).toBe('Severe');
+    expect(getAQICategory(430, 'india_cpcb').isSevere).toBe(true);
+  });
+
+  it('computes official India CPCB NAQI sub-indices across PM2.5, PM10, NO2, O3, SO2, and CO', () => {
+    expect(calculateIndiaCpcbSubIndex('pm25', 30)).toBe(50);
+    expect(calculateIndiaCpcbSubIndex('pm25', 60)).toBe(100);
+    expect(calculateIndiaCpcbSubIndex('pm25', 90)).toBe(200);
+    expect(calculateIndiaCpcbSubIndex('pm25', 120)).toBe(300);
+    expect(calculateIndiaCpcbSubIndex('pm25', 250)).toBe(400);
+
+    expect(calculateIndiaCpcbSubIndex('pm10', 50)).toBe(50);
+    expect(calculateIndiaCpcbSubIndex('pm10', 100)).toBe(100);
+    expect(calculateIndiaCpcbSubIndex('pm10', 250)).toBe(200);
+    expect(calculateIndiaCpcbSubIndex('pm10', 350)).toBe(300);
+    expect(calculateIndiaCpcbSubIndex('pm10', 430)).toBe(400);
+
+    expect(calculateIndiaCpcbSubIndex('no2', 40)).toBe(50);
+    expect(calculateIndiaCpcbSubIndex('o3', 100)).toBe(100);
+    expect(calculateIndiaCpcbSubIndex('so2', 80)).toBe(100);
+    // CO is stored in µg/m³ and converted to mg/m³ (1000 µg/m³ = 1.0 mg/m³ -> sub-index 50)
+    expect(calculateIndiaCpcbSubIndex('co', 1000)).toBe(50);
+    expect(calculateIndiaCpcbSubIndex('co', 2000)).toBe(100);
+  });
+
+  it('enforces the CPCB minimum pollutant rule (>= 3 pollutants including PM2.5 or PM10)', () => {
+    const tooFew = calculateIndiaCpcbAqi({
+      pm25: 90,
+      pm10: 150,
+      no2: null,
+      o3: null,
+      so2: null,
+      co: null,
+    });
+    expect(tooFew.aqi).toBeNull();
+    expect(tooFew.sufficientData).toBe(false);
+    expect(tooFew.limitationNote).toContain('at least 3');
+
+    const noPm = calculateIndiaCpcbAqi({
+      pm25: null,
+      pm10: null,
+      no2: 40,
+      o3: 80,
+      so2: 40,
+      co: 1000,
+    });
+    expect(noPm.aqi).toBeNull();
+    expect(noPm.sufficientData).toBe(false);
+    expect(noPm.limitationNote).toContain('PM2.5 or PM10');
+  });
+
+  it('produces genuinely distinct US EPA AQI vs India CPCB NAQI scores on identical pollutant concentrations', () => {
+    const delhi = getDemoScenario('delhi-winter-smog')!;
+    const usReading = getScaleAQI(delhi, 'us_epa');
+    const cpcbReading = getScaleAQI(delhi, 'india_cpcb');
+
+    expect(usReading.value).toBe(312);
+    expect(usReading.category.name).toBe('Hazardous');
+
+    expect(cpcbReading.value).not.toBeNull();
+    expect(cpcbReading.value).not.toBe(usReading.value);
+    expect(cpcbReading.isCalculatedFromConcentrations).toBe(true);
+    expect(cpcbReading.isOfficialCpcbReading).toBe(false);
+    expect(cpcbReading.dominantSubIndexPollutant).toBe('PM2.5');
+    expect(cpcbReading.category.name).toBe('Very Poor');
+    expect(cpcbReading.methodologyNote).toContain('Not an official CPCB');
+  });
+
+  it('detects Indian cities for automatic CPCB scale default and exposes scale-specific reference tables and guidance', () => {
+    expect(
+      isLocationInIndia({
+        name: 'New Delhi',
+        country: 'India',
+        latitude: 28.6139,
+        longitude: 77.209,
+        timezone: 'Asia/Kolkata',
+      })
+    ).toBe(true);
+    expect(
+      isLocationInIndia({
+        name: 'Mumbai',
+        country: 'India',
+        latitude: 19.076,
+        longitude: 72.8777,
+        timezone: 'Asia/Kolkata',
+      })
+    ).toBe(true);
+    expect(
+      isLocationInIndia({
+        name: 'London',
+        country: 'United Kingdom',
+        latitude: 51.5074,
+        longitude: -0.1278,
+        timezone: 'Europe/London',
+      })
+    ).toBe(false);
+    expect(isLocationInIndia(null)).toBe(false);
+
+    const cpcbTable = getScaleReferenceTable('india_cpcb');
+    expect(cpcbTable.map((r) => r.name)).toContain('Satisfactory');
+    expect(cpcbTable.map((r) => r.name)).toContain('Moderately Polluted');
+
+    const cpcbSevere = getFamilyHealthGuidance(425, 'india_cpcb');
+    expect(cpcbSevere.severeWarning).toContain('Severe');
+    expect(cpcbSevere.scale).toBe('india_cpcb');
+
+    const delhi = getDemoScenario('delhi-winter-smog')!;
+    const cpcbWindow = findSaferOutdoorWindows(delhi.hourly, 'india_cpcb');
+    expect(cpcbWindow.available).toBe(true);
+    expect(cpcbWindow.averageAqi).not.toBeNull();
+    expect(cpcbWindow.peakAqi).not.toBeNull();
+  });
+
+  it('handles zero, negative, missing, NaN, Infinity, and extreme (>500) pollutant inputs safely across both scales', () => {
+    // US EPA edge cases
+    expect(getAQICategory(0, 'us_epa').name).toBe('Good');
+    expect(getAQICategory(500, 'us_epa').name).toBe('Hazardous');
+    expect(getAQICategory(750, 'us_epa').name).toBe('Hazardous');
+    expect(getAQICategory(Number.NaN, 'us_epa').name).toBe('Unavailable');
+    expect(getAQICategory(Number.POSITIVE_INFINITY, 'us_epa').name).toBe('Unavailable');
+    expect(calculatePm25SubIndex(0)).toBe(0);
+    expect(calculatePm25SubIndex(Number.NaN)).toBeNull();
+    expect(calculatePm25SubIndex(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(calculatePm25SubIndex(500)).toBeGreaterThan(500);
+
+    // India CPCB NAQI edge cases
+    expect(getAQICategory(0, 'india_cpcb').name).toBe('Good');
+    expect(getAQICategory(-10, 'india_cpcb').name).toBe('Unavailable');
+    expect(getAQICategory(Number.NaN, 'india_cpcb').name).toBe('Unavailable');
+    expect(getAQICategory(650, 'india_cpcb').name).toBe('Severe');
+
+    expect(calculateIndiaCpcbSubIndex('pm25', 0)).toBe(0);
+    expect(calculateIndiaCpcbSubIndex('pm25', -5)).toBeNull();
+    expect(calculateIndiaCpcbSubIndex('pm25', null)).toBeNull();
+    expect(calculateIndiaCpcbSubIndex('pm25', Number.NaN)).toBeNull();
+    expect(calculateIndiaCpcbSubIndex('pm25', 9999)).toBe(500); // CPCB caps at 500
+
+    const extremeCpcb = calculateIndiaCpcbAqi({
+      pm25: 900,
+      pm10: 1200,
+      no2: 600,
+      o3: null,
+      so2: null,
+      co: null,
+    });
+    expect(extremeCpcb.sufficientData).toBe(true);
+    expect(extremeCpcb.aqi).toBe(500);
+  });
+});
+
 describe('Sustainable Commute Emissions Calculator', () => {
   it('calculates transparent CO2e savings from solo petrol car to metro rail', () => {
     // 10 km one-way * 2 * 5 days * 50 weeks = 5,000 km/yr
@@ -206,12 +369,42 @@ describe('Sustainable Commute Emissions Calculator', () => {
     expect(res.percentReduction).toBe(100);
   });
 
-  it('rejects out-of-range inputs with validation errors', () => {
+  it('rejects zero, negative, NaN, and extreme out-of-range inputs with validation errors', () => {
     expect(
       calculateCommuteImpact({
         currentMode: 'solo_petrol_car',
         targetMode: 'city_bus',
         oneWayDistanceKm: 0,
+        daysPerWeek: 5,
+        weeksPerYear: 46,
+      }).valid
+    ).toBe(false);
+
+    expect(
+      calculateCommuteImpact({
+        currentMode: 'solo_petrol_car',
+        targetMode: 'city_bus',
+        oneWayDistanceKm: -12,
+        daysPerWeek: 5,
+        weeksPerYear: 46,
+      }).valid
+    ).toBe(false);
+
+    expect(
+      calculateCommuteImpact({
+        currentMode: 'solo_petrol_car',
+        targetMode: 'city_bus',
+        oneWayDistanceKm: Number.NaN,
+        daysPerWeek: 5,
+        weeksPerYear: 46,
+      }).valid
+    ).toBe(false);
+
+    expect(
+      calculateCommuteImpact({
+        currentMode: 'solo_petrol_car',
+        targetMode: 'city_bus',
+        oneWayDistanceKm: 1000,
         daysPerWeek: 5,
         weeksPerYear: 46,
       }).valid

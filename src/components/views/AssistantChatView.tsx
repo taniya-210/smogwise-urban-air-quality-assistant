@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Send, Trash2 } from 'lucide-react';
+import { Loader2, Send, Sparkles, Trash2 } from 'lucide-react';
+import { CollapsibleDataGrounding } from '../AiGroundingBanner.tsx';
 import { FallbackNoticeBanner } from '../FallbackNoticeBanner.tsx';
 import { sendAssistantMessage } from '../../services/api.ts';
-import type { AirQualityData, ChatTurn, HouseholdProfile } from '../../shared/types.ts';
+import { getScaleAQI, getScaleDisplayLabel } from '../../shared/aqi.ts';
+import type {
+  AirQualityData,
+  AQIScaleId,
+  ChatTurn,
+  HouseholdProfile,
+} from '../../shared/types.ts';
 
 interface AssistantChatViewProps {
   airQuality: AirQualityData | null;
   profile: HouseholdProfile;
+  aqiScale: AQIScaleId;
 }
 
 const STARTER_QUESTIONS = [
@@ -16,9 +24,13 @@ const STARTER_QUESTIONS = [
   'How can our housing society reduce winter generator and leaf-burning smoke?',
 ];
 
-const MAX_MESSAGE_LENGTH = 1200;
+const MAX_MESSAGE_LENGTH = 500;
 
-export function AssistantChatView({ airQuality, profile }: AssistantChatViewProps) {
+export function AssistantChatView({
+  airQuality,
+  profile,
+  aqiScale,
+}: AssistantChatViewProps) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -26,6 +38,9 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
   const [validationError, setValidationError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inFlightRef = useRef(false);
+
+  const activeScaleReading = getScaleAQI(airQuality, aqiScale);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -41,7 +56,7 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
       setValidationError(`Questions must be ${MAX_MESSAGE_LENGTH} characters or fewer.`);
       return;
     }
-    if (sending || retryingTurnId) return;
+    if (inFlightRef.current || sending || retryingTurnId) return;
 
     const userTurn: ChatTurn = {
       id: `user-${Date.now()}`,
@@ -54,6 +69,7 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    inFlightRef.current = true;
     setMessages((prev) => [...prev, userTurn]);
     setInput('');
     setValidationError(null);
@@ -66,6 +82,8 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
         history: priorHistory,
         airQuality,
         profile,
+        aqiScale,
+        forceRefresh: false,
       });
 
       const assistantTurn: ChatTurn = {
@@ -74,6 +92,11 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
         content: response.reply,
         timestamp: new Date().toISOString(),
         generatedBy: response.generatedBy,
+        fromCache: response.fromCache,
+        cachedAt: response.cachedAt,
+        modelUsed: response.modelUsed,
+        diagnosticDetail: response.diagnosticDetail,
+        aqiScale: response.aqiScale ?? aqiScale,
         verifiedDataUsed: response.verifiedDataUsed,
         generalGuidanceNote: response.generalGuidanceNote,
         followUpSuggestions: response.followUpSuggestions,
@@ -89,6 +112,7 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
           : 'Could not reach the assistant right now. Please try again.'
       );
     } finally {
+      inFlightRef.current = false;
       setSending(false);
     }
   }
@@ -98,7 +122,8 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
    * Never creates automatic or background retry loops.
    */
   async function handleRetryFallbackTurn(turnId: string, promptText: string) {
-    if (sending || retryingTurnId) return;
+    if (inFlightRef.current || sending || retryingTurnId) return;
+    inFlightRef.current = true;
     setRetryingTurnId(turnId);
     setNetworkError(null);
 
@@ -116,6 +141,8 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
         history: historyBeforeTurn,
         airQuality,
         profile,
+        aqiScale,
+        forceRefresh: true,
       });
 
       setMessages((prev) =>
@@ -126,6 +153,11 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
                 content: response.reply,
                 timestamp: new Date().toISOString(),
                 generatedBy: response.generatedBy,
+                fromCache: response.fromCache,
+                cachedAt: response.cachedAt,
+                modelUsed: response.modelUsed,
+                diagnosticDetail: response.diagnosticDetail,
+                aqiScale: response.aqiScale ?? aqiScale,
                 verifiedDataUsed: response.verifiedDataUsed,
                 generalGuidanceNote: response.generalGuidanceNote,
                 followUpSuggestions: response.followUpSuggestions,
@@ -142,6 +174,7 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
           : 'Retry could not reach the assistant right now. Please try again shortly.'
       );
     } finally {
+      inFlightRef.current = false;
       setRetryingTurnId(null);
     }
   }
@@ -192,13 +225,15 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
                   Grounded in {airQuality?.location.name || 'Your Active Location'}
                 </h3>
                 <p className="text-sm text-slate-600">
-                  {airQuality && airQuality.mode !== 'unavailable' && airQuality.current.usAqi !== null
-                    ? `Active context: US EPA AQI ${airQuality.current.usAqi} (${
+                  {airQuality && airQuality.mode !== 'unavailable' && activeScaleReading.value !== null
+                    ? `Active context: ${getScaleDisplayLabel(aqiScale)} ${activeScaleReading.value} (${
                         airQuality.mode === 'demo'
                           ? 'Illustrative Demo Scenario — Not Live'
                           : airQuality.source.name
                       }).`
-                    : 'Live AQI data is currently unavailable — the assistant will note that clearly and provide general evidence-based guidance.'}
+                    : airQuality && airQuality.mode !== 'unavailable' && activeScaleReading.limitationNote
+                      ? activeScaleReading.limitationNote
+                      : 'Live AQI data is currently unavailable — the assistant will note that clearly and provide general evidence-based guidance.'}
                 </p>
               </div>
 
@@ -234,11 +269,30 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
                       : 'bg-slate-50 border border-slate-200 text-slate-900'
                   }`}
                 >
+                  {turn.role === 'assistant' && turn.generatedBy === 'gemini' && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
+                      <span className="inline-flex items-center gap-1 font-semibold text-blue-800">
+                        <Sparkles className="w-3 h-3" aria-hidden="true" />
+                        {turn.fromCache ? 'Cached Gemini AI' : 'Gemini AI'}
+                      </span>
+                      {turn.modelUsed && (
+                        <>
+                          <span aria-hidden="true" className="text-slate-300">
+                            ·
+                          </span>
+                          <span className="font-mono">{turn.modelUsed}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {turn.role === 'assistant' && turn.generatedBy === 'fallback' && (
                     <FallbackNoticeBanner
                       compact
                       reason={turn.errorNotice}
                       category={turn.errorCategory}
+                      diagnosticDetail={turn.diagnosticDetail}
+                      modelUsed={turn.modelUsed}
                       retrying={retryingTurnId === turn.id}
                       onRetry={
                         turn.promptForRetry
@@ -253,33 +307,18 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
                   </div>
 
                   {turn.role === 'assistant' && (
-                    <div className="pt-3 border-t border-slate-200 space-y-2 text-xs text-slate-600">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span
-                          className={`font-semibold ${
-                            turn.generatedBy === 'gemini' ? 'text-blue-800' : 'text-amber-900'
-                          }`}
-                        >
-                          {turn.generatedBy === 'gemini'
-                            ? 'AI-Generated by Google Gemini'
-                            : 'AI FALLBACK MODE · DEMO / TEMPLATE GUIDANCE'}
-                        </span>
-                        <span aria-hidden="true" className="text-slate-300">
-                          ·
-                        </span>
-                        <span className="break-words">
-                          <span className="font-semibold text-slate-700">Data grounding:</span>{' '}
-                          {turn.verifiedDataUsed && turn.verifiedDataUsed.length > 0
-                            ? turn.verifiedDataUsed.slice(0, 4).join(' · ')
-                            : 'No live readings used'}
-                        </span>
-                      </div>
-                      {turn.generalGuidanceNote && (
-                        <p className="text-slate-500 break-words">
-                          <span className="font-semibold text-slate-600">General guidance note:</span>{' '}
-                          {turn.generalGuidanceNote}
-                        </p>
-                      )}
+                    <div className="pt-2">
+                      <CollapsibleDataGrounding
+                        compact
+                        generatedBy={turn.generatedBy ?? 'fallback'}
+                        fromCache={turn.fromCache}
+                        cachedAt={turn.cachedAt}
+                        modelUsed={turn.modelUsed}
+                        airQuality={airQuality}
+                        aqiScale={turn.aqiScale ?? aqiScale}
+                        dataSourcesUsed={turn.verifiedDataUsed}
+                        disclaimer={turn.generalGuidanceNote}
+                      />
                     </div>
                   )}
                 </div>
@@ -364,8 +403,8 @@ export function AssistantChatView({ airQuality, profile }: AssistantChatViewProp
               Send
             </button>
           </div>
-          {input.length > 900 && (
-            <div className="text-right text-[11px] font-mono tabular-nums text-slate-500">
+          {input.length > 350 && (
+            <div className="text-right text-[11px] font-mono tabular-nums text-slate-600" aria-live="polite">
               {input.length} / {MAX_MESSAGE_LENGTH} characters
             </div>
           )}
